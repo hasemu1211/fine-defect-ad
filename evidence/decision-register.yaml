@@ -1,0 +1,4 @@
+[
+  {"decision_id":"DEC-STO-001","scope":"storage","decision":"Mandatory NTFS data/artifact roots and ext4 runtime roots","status":"proposed","drivers":["integrity"],"alternatives":["ext4-fallback"],"evidence_type":"preflight","primary_source":"approved-prd","reference_locator":"section-4.11","measurement_artifact":"pending","derivation":"source-backed-per-filesystem-budget","limitations":"no allocation has been authorized","reviewed_at":"2026-08-03","artifact_or_model_version":"r0"},
+  {"decision_id":"DEC-RUN-001","scope":"runtime","decision":"native fcntl GPU lease","status":"proposed","drivers":["benchmark-integrity"],"alternatives":["none"],"evidence_type":"unit-test","primary_source":"approved-prd","reference_locator":"gpu-lock","measurement_artifact":"pending","derivation":"nonblocking-kernel-lock","limitations":"local host only","reviewed_at":"2026-08-03","artifact_or_model_version":"r0"}
+]

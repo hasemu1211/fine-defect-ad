@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "status": "PENDING_EXTERNAL_CONTAINER_CDI_AND_APPROVED_IMAGE",
+  "evidence": {
+    "python": {"command": ["python3", "--version"], "version": "3.12.3", "captured_at": "2026-08-03"},
+    "host_gpu": {"command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"], "status": "PENDING_COMMAND_EVIDENCE"},
+    "container_gpu": {"command": ["docker", "run", "--rm", "--gpus", "all"], "status": "PENDING_CDI_AND_APPROVED_IMAGE"}
+  },
+  "direct_dependencies": []
+}
