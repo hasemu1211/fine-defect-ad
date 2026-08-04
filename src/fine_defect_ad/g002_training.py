@@ -139,7 +139,9 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
         if 'lease' in locals() and lease.pending_signal:
             cause = "INTERRUPTED_RESUMABLE"
             if 'committed' in locals():
-                if committed["metrics"] is None: committed["metrics"] = artifacts.metrics(getattr(safety, "rows", []))
+                if committed["metrics"] is None:
+                    try: committed["metrics"] = artifacts.metrics(getattr(safety, "rows", []))
+                    except Exception: cause = "RUNNER:SIGNAL_METRICS_COMMIT_FAILED"
                 if committed["checkpoint"] is None or committed["sidecar"] is None or committed["metrics"] is None:
                     cause = "RUNNER:SIGNAL_CHECKPOINT_OR_METRICS_MISSING"
                 else:
