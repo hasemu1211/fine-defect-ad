@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
-from .storage import Allocation, READY, STOPPED_INCOMPLETE, StorageBlocked, preflight, require_proof, roots_from_env
+from .storage import Allocation, INVALIDATED, READY, STOPPED_INCOMPLETE, StorageBlocked, invalidate_run, preflight, require_proof, roots_from_env
 
 ASSETS = {
     "teacher": {
@@ -100,6 +100,10 @@ def _content_range(response, start: int, total: int) -> None:
         raise StorageBlocked("server did not honor validated HTTP Range resume")
 
 
+def _invalidated(proof, *, run_id: str, asset: str, partial: Path | None) -> dict:
+    return {**invalidate_run(proof, run_id=run_id, cause="ENOSPC", partial_path=partial), "asset": asset}
+
+
 def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) -> dict:
     """Download one pinned archive after a fresh full-capacity proof; failures persist."""
     asset = _asset(name); active = roots or roots_from_env()
@@ -119,14 +123,14 @@ def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) ->
         digest, offset = hashlib.sha256(), 0
     if offset > asset["bytes"]:
         raise StorageBlocked("partial archive exceeds pinned length")
-    if offset == asset["bytes"]:
-        if digest != asset["sha256"]:
-            raise StorageBlocked("complete partial archive hash mismatch; partial preserved")
-        require_proof(proof, run_id=run_id, roots=active)
-        os.replace(partial, raw); _fsync_directory(raw.parent)
-        return {"status": READY, "asset": name, "path": str(raw), "sha256": asset["sha256"], "resumed": True}
-    request = urllib.request.Request(asset["url"], headers={"Range": f"bytes={offset}-"} if offset else {})
     try:
+        if offset == asset["bytes"]:
+            if digest != asset["sha256"]:
+                raise StorageBlocked("complete partial archive hash mismatch; partial preserved")
+            require_proof(proof, run_id=run_id, roots=active)
+            os.replace(partial, raw); _fsync_directory(raw.parent)
+            return {"status": READY, "asset": name, "path": str(raw), "sha256": asset["sha256"], "resumed": True}
+        request = urllib.request.Request(asset["url"], headers={"Range": f"bytes={offset}-"} if offset else {})
         with urllib.request.urlopen(request, timeout=60) as response:
             length = response.headers.get("Content-Length")
             if offset:
@@ -140,19 +144,14 @@ def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) ->
                 for block in iter(lambda: response.read(1024 * 1024), b""):
                     output.write(block); digest.update(block)
                 output.flush(); os.fsync(output.fileno())
+        if partial.stat().st_size != asset["bytes"] or digest.hexdigest() != asset["sha256"]:
+            raise StorageBlocked("downloaded archive hash or size mismatch; partial preserved")
+        os.replace(partial, raw); _fsync_directory(raw.parent)
+        return {"status": READY, "asset": name, "path": str(raw), "sha256": asset["sha256"]}
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
-            marker = active["artifact"] / f".invalidated-{run_id}.json"
-            with marker.open("w", encoding="utf-8") as stream:
-                json.dump({"run_id": run_id, "status": "INVALIDATED", "workflow_status": STOPPED_INCOMPLETE, "cause": "ENOSPC", "partial_path": str(partial)}, stream, sort_keys=True)
-                stream.flush(); os.fsync(stream.fileno())
-            _fsync_directory(marker.parent)
-            return {"status": "INVALIDATED", "workflow_status": STOPPED_INCOMPLETE, "asset": name, "partial_path": str(partial)}
+            return _invalidated(proof, run_id=run_id, asset=name, partial=partial)
         raise
-    if partial.stat().st_size != asset["bytes"] or digest.hexdigest() != asset["sha256"]:
-        raise StorageBlocked("downloaded archive hash or size mismatch; partial preserved")
-    os.replace(partial, raw); _fsync_directory(raw.parent)
-    return {"status": READY, "asset": name, "path": str(raw), "sha256": asset["sha256"]}
 
 
 def _members(asset: dict, archive: Path) -> Iterable[tuple[str, int, object]]:
@@ -210,38 +209,48 @@ def _copy_stream(source, destination: Path) -> str:
 
 def extract(*, name: str, run_id: str, roots: dict[str, Path] | None = None) -> dict:
     """Extract one inspected archive to a dedicated data subdirectory after fresh proof."""
-    active = roots or roots_from_env(); asset = _asset(name); root = active["data"]
+    active = roots or roots_from_env()
+    if "data" not in active or "artifact" not in active:
+        raise StorageBlocked("data and artifact roots are required for extraction")
+    asset = _asset(name); root = active["data"]
     plan = extraction_plan(run_id, root)
     proof = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=0, reserve_evidence=plan["reserve_evidence"], roots=active)
     require_proof(proof, run_id=run_id, roots=active)
     target = root / "efficientad-upstream" / "extracted" / name
-    target.mkdir(parents=True, exist_ok=True)
-    copied = []
-    archive = _raw_path(root, asset)
-    if asset["format"] == "zip":
-        with zipfile.ZipFile(archive) as zipped:
-            for info in zipped.infolist():
-                relative = Path(info.filename)
-                if relative.is_absolute() or ".." in relative.parts or not info.filename: raise StorageBlocked(f"unsafe archive member {info.filename!r}")
-                destination = target / relative
-                if not _under(destination, target): raise StorageBlocked("archive member escapes extraction root")
-                if info.is_dir(): destination.mkdir(parents=True, exist_ok=True); continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with zipped.open(info) as source: copied.append({"path": info.filename, "sha256": _copy_stream(source, destination)})
-    else:
-        with tarfile.open(archive, "r:gz") as tarred:
-            for info in tarred:
-                relative = Path(info.name)
-                if relative.is_absolute() or ".." in relative.parts or not info.name or not (info.isfile() or info.isdir()): raise StorageBlocked(f"unsafe archive member {info.name!r}")
-                destination = target / relative
-                if not _under(destination, target): raise StorageBlocked("archive member escapes extraction root")
-                if info.isdir(): destination.mkdir(parents=True, exist_ok=True); continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                source = tarred.extractfile(info)
-                if source is None: raise StorageBlocked(f"cannot read archive member {info.name}")
-                with source: copied.append({"path": info.name, "sha256": _copy_stream(source, destination)})
-    _fsync_directory(target)
-    return {"status": READY, "asset": name, "target": str(target), "members": copied}
+    copied = []; partial = None
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        archive = _raw_path(root, asset)
+        if asset["format"] == "zip":
+            with zipfile.ZipFile(archive) as zipped:
+                for info in zipped.infolist():
+                    relative = Path(info.filename)
+                    if relative.is_absolute() or ".." in relative.parts or not info.filename: raise StorageBlocked(f"unsafe archive member {info.filename!r}")
+                    destination = target / relative
+                    if not _under(destination, target): raise StorageBlocked("archive member escapes extraction root")
+                    if info.is_dir(): destination.mkdir(parents=True, exist_ok=True); continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    partial = destination.with_name("." + destination.name + ".partial")
+                    with zipped.open(info) as source: copied.append({"path": info.filename, "sha256": _copy_stream(source, destination)})
+        else:
+            with tarfile.open(archive, "r:gz") as tarred:
+                for info in tarred:
+                    relative = Path(info.name)
+                    if relative.is_absolute() or ".." in relative.parts or not info.name or not (info.isfile() or info.isdir()): raise StorageBlocked(f"unsafe archive member {info.name!r}")
+                    destination = target / relative
+                    if not _under(destination, target): raise StorageBlocked("archive member escapes extraction root")
+                    if info.isdir(): destination.mkdir(parents=True, exist_ok=True); continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    partial = destination.with_name("." + destination.name + ".partial")
+                    source = tarred.extractfile(info)
+                    if source is None: raise StorageBlocked(f"cannot read archive member {info.name}")
+                    with source: copied.append({"path": info.name, "sha256": _copy_stream(source, destination)})
+        _fsync_directory(target)
+        return {"status": READY, "asset": name, "target": str(target), "members": copied}
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            return _invalidated(proof, run_id=run_id, asset=name, partial=partial)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -256,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         else: result = extract(name=args.asset, run_id=args.run_id, roots=roots)
         output = json.dumps(result, sort_keys=True)
         if args.output: args.output.write_text(output + "\n", encoding="utf-8")
-        print(output); return 0
+        print(output); return 2 if result.get("status") == INVALIDATED else 0
     except (OSError, StorageBlocked, urllib.error.URLError, tarfile.TarError, zipfile.BadZipFile) as exc:
         print(json.dumps({"status": "STORAGE_BLOCKED", "workflow_status": STOPPED_INCOMPLETE, "reason": str(exc)})); return 2
 

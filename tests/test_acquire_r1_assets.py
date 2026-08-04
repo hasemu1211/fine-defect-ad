@@ -20,7 +20,7 @@ class R1AssetTests(unittest.TestCase):
         raw = self.root / "efficientad-upstream/raw"; raw.mkdir(parents=True); self.archive = raw / self.asset["archive"]
         with zipfile.ZipFile(self.archive, "w") as zipped: zipped.writestr("weights/small.pth", b"small")
         self.asset["bytes"] = self.archive.stat().st_size; self.asset["sha256"] = hashlib.sha256(self.archive.read_bytes()).hexdigest()
-        self.proof = PreflightProof("run", {}, "x", "2026-08-04T00:00:00+00:00", {}, [{"component_id": "x"}], {})
+        self.proof = PreflightProof("run", {"artifact": str(self.artifact)}, "x", "2026-08-04T00:00:00+00:00", {}, [{"component_id": "x"}], {})
 
     def tearDown(self): self.tmp.cleanup()
 
@@ -32,9 +32,8 @@ class R1AssetTests(unittest.TestCase):
         with patch.dict(ASSETS, {"teacher": self.asset}, clear=True):
             details = inspect("teacher", self.root)
             self.assertEqual((details["uncompressed_bytes"], details["maximum_file_bytes"]), (5, 5))
-            roots = {"data": self.root}
             with patch("fine_defect_ad.acquire_r1_assets.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_r1_assets.require_proof"):
-                result = extract(name="teacher", run_id="run", roots=roots)
+                result = extract(name="teacher", run_id="run", roots=self.roots)
         self.assertEqual(result["status"], "READY")
         self.assertEqual((self.root / "efficientad-upstream/extracted/teacher/weights/small.pth").read_bytes(), b"small")
 
@@ -97,6 +96,39 @@ class R1AssetTests(unittest.TestCase):
         marker = self.artifact / ".invalidated-run.json"
         self.assertEqual(result["status"], "INVALIDATED")
         self.assertEqual(json.loads(marker.read_text()), {"cause": "ENOSPC", "partial_path": str(partial), "run_id": "run", "status": "INVALIDATED", "workflow_status": "STOPPED_INCOMPLETE"})
+
+    def test_archive_final_rename_enospc_invalidates_and_preserves_partial(self):
+        partial = self.archive.with_name("." + self.archive.name + ".partial")
+        self.archive.replace(partial)
+        real_replace = __import__("os").replace
+        def no_space_at_final(source, destination):
+            if Path(source) == partial: raise OSError(errno.ENOSPC, "full")
+            return real_replace(source, destination)
+        with patch.dict(ASSETS, {"teacher": self.asset}, clear=True), \
+             patch("fine_defect_ad.acquire_r1_assets.preflight", return_value=self.proof), \
+             patch("fine_defect_ad.acquire_r1_assets.require_proof"), \
+             patch("fine_defect_ad.acquire_r1_assets.os.replace", side_effect=no_space_at_final):
+            result = download(name="teacher", run_id="run", roots=self.roots)
+        self.assertEqual(result["status"], "INVALIDATED")
+        self.assertEqual(result["workflow_status"], "STOPPED_INCOMPLETE")
+        self.assertTrue(partial.exists())
+        self.assertTrue((self.artifact / ".invalidated-run.json").exists())
+
+    def test_extracted_member_rename_enospc_invalidates_and_preserves_partial(self):
+        real_replace = __import__("os").replace
+        def no_space_at_final(source, destination):
+            if str(source).endswith(".partial"): raise OSError(errno.ENOSPC, "full")
+            return real_replace(source, destination)
+        with patch.dict(ASSETS, {"teacher": self.asset}, clear=True), \
+             patch("fine_defect_ad.acquire_r1_assets.preflight", return_value=self.proof), \
+             patch("fine_defect_ad.acquire_r1_assets.require_proof"), \
+             patch("fine_defect_ad.acquire_r1_assets.os.replace", side_effect=no_space_at_final):
+            result = extract(name="teacher", run_id="run", roots=self.roots)
+        partial = self.root / "efficientad-upstream/extracted/teacher/weights/.small.pth.partial"
+        self.assertEqual(result["status"], "INVALIDATED")
+        self.assertEqual(result["workflow_status"], "STOPPED_INCOMPLETE")
+        self.assertTrue(partial.exists())
+        self.assertTrue((self.artifact / ".invalidated-run.json").exists())
 
     def test_download_requires_artifact_root(self):
         with patch.dict(ASSETS, {"teacher": self.asset}, clear=True):
