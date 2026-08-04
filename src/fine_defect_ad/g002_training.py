@@ -106,19 +106,17 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
     cause = None
     try:
-        with GpuLease(args.g002.lease_directory, args.run_id, "g002-training"):
+        with GpuLease(args.g002.lease_directory, args.run_id, "g002-training", defer_signals=True) as lease:
             import torch
             from lightning.pytorch import Callback
             artifacts = TrainingArtifacts(Path(proof.roots["artifact"]), args.run_id, identity)
             pending = {"signal": None}
-            previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
-            for sig in previous: signal.signal(sig, lambda signum, frame: pending.update(signal=signum))
             class SafetyMetrics(Callback):
                 def __init__(self): self.started = time.monotonic(); self.rows = []
                 def on_before_optimizer_step(self, trainer, module, optimizer):
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
-                    if pending["signal"]:
+                    if lease.pending_signal:
                         artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
@@ -132,10 +130,10 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
             checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
             metrics_path = artifacts.metrics(safety.rows)
-            if pending["signal"]: cause = "INTERRUPTED_RESUMABLE"
+            if lease.pending_signal: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
             else: artifacts.final({"run_id":args.run_id,"status":READY,"checkpoint_sha256":file_sha256(checkpoint_path),"metrics_sha256":file_sha256(metrics_path),"resume_exactness":"NOT_ESTABLISHED"})
-            for sig, old in previous.items(): signal.signal(sig, old)
+
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
