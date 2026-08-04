@@ -177,3 +177,33 @@ class TrainingArtifactTests(TestCase):
             with patch('fine_defect_ad.g002_training.training_identity',return_value={'x':1}), patch('fine_defect_ad.g002_training.validate_training_lease'):
                 record=run_training(args,admit_pilot_fn=lambda _:pilot,preflight_fn=lambda **k:proof,lease_factory=Lease,runtime_factory=runtime,artifacts_factory=Art,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'run','command':'g002-training'},{'state':'released','run_id':'run','command':'g002-training','outcome':'signal:15'}],torch_module=torch,callback_base=object)
             self.assertEqual(record['status'],'STOPPED_INCOMPLETE'); self.assertEqual(record['termination_cause'],'INTERRUPTED_RESUMABLE'); self.assertIn('final',record['artifacts'])
+
+    def test_fake_final_evidence_failure_stops(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from fine_defect_ad.g002_training import run_training, TrainingArgs
+        from fine_defect_ad.g002_pilot import G002Args
+        from fine_defect_ad.storage import PreflightProof
+        with TemporaryDirectory() as raw:
+            root=Path(raw); pilot={'median_seconds_per_step':1}; g=G002Args(root,root/'t',root/'i','run',root/'lease')
+            args=TrainingArgs(root/'pilot','run',root,root/'metrics',g)
+            class Lease:
+                pending_signal=None
+                def __init__(self,*a,**k): pass
+                def __enter__(self): return self
+                def __exit__(self,*a): pass
+            class Art:
+                def __init__(self,*a): self.root=root
+                def checkpoint(self,step,serializer):
+                    cp=root/'c'; sc=root/'s'; cp.write_bytes(b'c');sc.write_bytes(b's'); return cp,sc
+                def metrics(self,rows): p=root/'m';p.write_bytes(b'm');return p
+                def final(self,r): raise RuntimeError('write failed')
+            class Trainer:
+                global_step=70000; callbacks=[]; current_epoch=0; optimizers=[SimpleNamespace(param_groups=[{'lr':1.0}])]; callback_metrics={}
+                def fit(self,*a,**k): pass
+            runtime=lambda *a,**k:(object(),object(),Trainer(),None)
+            proof=PreflightProof('run',{'artifact':str(root)},'f',datetime.now(timezone.utc).isoformat(),{},[],{'reserve_bytes':0})
+            torch=SimpleNamespace(cuda=SimpleNamespace(max_memory_allocated=lambda:0,max_memory_reserved=lambda:0),isfinite=lambda x:x)
+            with patch('fine_defect_ad.g002_training.training_identity',return_value={'x':1}), patch('fine_defect_ad.g002_training.validate_training_lease'):
+                record=run_training(args,admit_pilot_fn=lambda _:pilot,preflight_fn=lambda **k:proof,lease_factory=Lease,runtime_factory=runtime,artifacts_factory=Art,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'run','command':'g002-training'},{'state':'released','run_id':'run','command':'g002-training','outcome':'normal'}],torch_module=torch,callback_base=object)
+            self.assertEqual(record['status'],'STOPPED_INCOMPLETE'); self.assertTrue(record['termination_cause'].startswith('EVIDENCE:'))
