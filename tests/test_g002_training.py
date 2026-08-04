@@ -171,6 +171,7 @@ class TrainingArtifactTests(TestCase):
                 global_step=70000; callbacks=[]; current_epoch=0; optimizers=[SimpleNamespace(param_groups=[{'lr':1.0}])]; callback_metrics={}
                 def fit(self,*a,**k):
                     [cb.on_train_batch_end(self,None,None,None,0) for cb in self.callbacks if hasattr(cb,"on_train_batch_end")]
+                    raise RuntimeError("SIGTERMException")
             runtime=lambda *a,**k:(object(),object(),Trainer(),None)
             proof=PreflightProof('run',{'artifact':str(root)},'f',datetime.now(timezone.utc).isoformat(),{},[],{'reserve_bytes':0})
             torch=SimpleNamespace(cuda=SimpleNamespace(max_memory_allocated=lambda:0,max_memory_reserved=lambda:0),isfinite=lambda x:x)
