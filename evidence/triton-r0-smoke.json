@@ -1,0 +1,62 @@
+{
+  "backend_inventory": [
+    "pytorch"
+  ],
+  "command": "docker run --rm --gpus all --log-driver=none <pinned-triton-digest> python3 -c <R0 smoke>",
+  "container": {
+    "cuda_version": "13.3.0.035",
+    "gpu_baseline": "NVIDIA GeForce RTX 5060, 595.71.05, 8151 MiB, 1080 MiB",
+    "gpu_peak_used_mib": 1287,
+    "model_generator_torch_version": "2.7.0+cu128 12.8",
+    "response": {
+      "model_name": "add_one",
+      "model_version": "1",
+      "outputs": [
+        {
+          "data": [
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ],
+          "datatype": "FP32",
+          "name": "OUTPUT__0",
+          "shape": [
+            1,
+            4
+          ]
+        }
+      ]
+    },
+    "triton_version": "2.70.0"
+  },
+  "contention": {
+    "message": "BUSY holder_command=triton-r0-smoke holder_run_id=triton-r0-smoke-20260804-final",
+    "status": "BUSY"
+  },
+  "image": {
+    "id": "sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a",
+    "repo_digests": [
+      "nvcr.io/nvidia/tritonserver@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a"
+    ],
+    "size_bytes": 6836392644
+  },
+  "lease_events": [
+    {
+      "state": "acquired",
+      "timestamp": "2026-08-04T01:06:43.443345+00:00"
+    },
+    {
+      "outcome": "normal",
+      "state": "released",
+      "timestamp": "2026-08-04T01:06:49.607453+00:00"
+    }
+  ],
+  "limitations": [
+    "single fixed-shape add-one smoke; not a performance or production serving claim"
+  ],
+  "lock_mode": "fcntl.flock",
+  "run_id": "triton-r0-smoke-20260804-final",
+  "status": "READY",
+  "timestamp": "2026-08-04T01:06:49.609599+00:00"
+}

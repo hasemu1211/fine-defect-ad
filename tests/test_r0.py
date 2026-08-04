@@ -8,6 +8,7 @@ from fine_defect_ad.manifest import SPLIT_COUNTS, Sample, canonical_manifest_has
 from fine_defect_ad.runtime import collect_runtime_evidence, container_gpu_spike, discover_docker_storage
 from fine_defect_ad.storage import Allocation, ROOT_ENV, StorageBlocked, atomic_write, preflight, require_proof
 from fine_defect_ad.preflight import main as preflight_main
+from fine_defect_ad.triton_smoke import IMAGE, build_container_command
 
 class R0Tests(unittest.TestCase):
  def samples(self):
@@ -98,4 +99,11 @@ class R0Tests(unittest.TestCase):
   with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','run'],'returncode':1,'stdout':'','stderr':'CDI device error'}):
    self.assertEqual(container_gpu_spike('approved:image')['reason'],'DOCKER_CDI_GPU_UNAVAILABLE')
   self.assertEqual(collect_runtime_evidence()['status'],'STOPPED_INCOMPLETE')
+ def test_triton_smoke_command_is_one_bounded_pinned_container(self):
+  command=build_container_command(Path('/authorized/artifacts/models'))
+  self.assertEqual(command[:8],['docker','run','--rm','--gpus','all','--log-driver=none','--read-only','--tmpfs'])
+  self.assertIn(IMAGE,command); self.assertIn('/tmp:rw,size=64m,mode=1777',command); self.assertIn('/root/.cache:rw,size=64m',command)
+  from fine_defect_ad.triton_smoke import _MODEL_PROGRAM
+  self.assertIn('max_batch_size: 1',_MODEL_PROGRAM)
+  validate_evidence({'run_id':'triton','timestamp':'t','command':'docker run pinned digest','status':'READY','limitations':[],'lock_mode':'fcntl.flock'})
 if __name__=='__main__': unittest.main()

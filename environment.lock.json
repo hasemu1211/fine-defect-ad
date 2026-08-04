@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "PENDING_NGC_TERMS_AND_PINNED_TRITON_PULL_RUNTIME",
+  "status": "TRITON_R0_GPU_SMOKE_READY_NGC_TERMS_ACCEPTANCE_NOT_OBSERVED",
   "evidence": {
     "host_gpu": {
       "command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
@@ -31,7 +31,13 @@
     "triton_pull": {
       "image": "nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a",
       "platform": "linux/amd64",
-      "status": "PENDING_NVIDIA_NGC_TERMS_AND_AUTHORIZED_PULL"
+      "status": "PULLED_PINNED_DIGEST_NGC_TERMS_ACCEPTANCE_NOT_OBSERVED"
+    },
+    "triton_r0_gpu_smoke": {
+      "command": ["docker", "run", "--rm", "--gpus", "all", "--log-driver=none", "nvcr.io/nvidia/tritonserver@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a"],
+      "status": "READY",
+      "observed": "Triton 2.70.0 PyTorch backend KIND_GPU fixed [1,4] add-one response [2,3,4,5]",
+      "captured_at": "2026-08-04"
     }
   },
   "direct_dependencies": []
