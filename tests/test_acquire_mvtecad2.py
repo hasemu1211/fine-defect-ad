@@ -1,5 +1,7 @@
 import hashlib
+import io
 import json
+import tarfile
 import os
 import subprocess
 import sys
@@ -10,7 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from fine_defect_ad.acquire_mvtecad2 import ARCHIVE_NAME, StorageBlocked, archive_plan, download, load_terms_ack
+import fine_defect_ad.acquire_mvtecad2 as acquire
+from fine_defect_ad.acquire_mvtecad2 import ARCHIVE_NAME, ARCHIVE_SHA256, ARCHIVE_URL, AUDIT_METHOD, StorageBlocked, archive_plan, audit_metadata, download, load_extraction_evidence, load_terms_ack
 from fine_defect_ad.storage import PreflightProof
 
 
@@ -34,7 +37,7 @@ class AcquisitionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); root = Path(self.tmp.name)
         self.data, self.artifact = root / "data", root / "artifact"; self.data.mkdir(); self.artifact.mkdir()
         self.ack = root / "terms.json"; self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00+00:00"}))
-        self.sizing = root / "extraction.json"; self.sizing.write_text(json.dumps({"exact_uncompressed_bytes": 100, "max_member_bytes": 20, "derivation": "test tar header audit"}))
+        self.sizing = root / "extraction.json"; self.sizing.write_text(json.dumps({"archive_url": ARCHIVE_URL, "archive_bytes": 32_739_596_982, "archive_sha256": ARCHIVE_SHA256, "audit_method": AUDIT_METHOD, "exact_uncompressed_bytes": 100, "max_member_bytes": 20, "member_count": 2}))
         self.payload = b"tiny-mvtec-archive"; _RangeServer.payload = self.payload; _RangeServer.bad_range = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _RangeServer); self.thread = threading.Thread(target=self.server.serve_forever); self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}/archive"
@@ -42,7 +45,11 @@ class AcquisitionTests(unittest.TestCase):
 
     def tearDown(self): self.server.shutdown(); self.thread.join(); self.tmp.cleanup()
 
+    def _write_sizing(self):
+        self.sizing.write_text(json.dumps({"archive_url": acquire.ARCHIVE_URL, "archive_bytes": acquire.ARCHIVE_BYTES, "archive_sha256": acquire.ARCHIVE_SHA256, "audit_method": acquire.AUDIT_METHOD, "exact_uncompressed_bytes": 100, "max_member_bytes": 20, "member_count": 2}))
+
     def _run(self):
+        self._write_sizing()
         return download(run_id="run", terms_ack=self.ack, extraction_evidence=self.sizing, url=self.url)
 
     def test_fresh_download_and_plan_count_one_atomic_archive(self):
@@ -89,10 +96,33 @@ class AcquisitionTests(unittest.TestCase):
         with patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}):
             with self.assertRaises(StorageBlocked): self._run()
 
+    def test_metadata_audit_binds_counted_tar_to_compressed_identity(self):
+        payload = io.BytesIO()
+        with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+            member = tarfile.TarInfo("one"); member.size = 3; archive.addfile(member, io.BytesIO(b"one"))
+        body = payload.getvalue()
+        class Response(io.BytesIO):
+            status = 200
+            headers = {"Content-Length": str(len(body))}
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+        with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(body)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(body).hexdigest()):
+            result = audit_metadata(terms_ack=self.ack, url=self.url, opener=lambda *_args, **_kwargs: Response(body))
+        self.assertEqual((result["exact_uncompressed_bytes"], result["max_member_bytes"], result["member_count"]), (3, 3, 1))
+        self.assertEqual(result["status"], "SIZING_AUDIT_ONLY_NOT_STORAGE_READY")
+
+    def test_forged_extraction_archive_hash_or_size_is_rejected(self):
+        evidence = json.loads(self.sizing.read_text())
+        evidence["archive_sha256"] = "0" * 64; self.sizing.write_text(json.dumps(evidence))
+        with self.assertRaises(StorageBlocked): load_extraction_evidence(self.sizing)
+        evidence["archive_sha256"] = ARCHIVE_SHA256; evidence["archive_bytes"] = 1; self.sizing.write_text(json.dumps(evidence))
+        with self.assertRaises(StorageBlocked): load_extraction_evidence(self.sizing)
+
     def test_complete_partial_finalizes_without_network(self):
         partial = self.data / ("." + ARCHIVE_NAME + ".partial"); partial.write_bytes(self.payload)
         no_network = Mock()
         with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_mvtecad2.require_proof"):
+            self._write_sizing()
             result = download(run_id="run", terms_ack=self.ack, extraction_evidence=self.sizing, url=self.url, opener=no_network)
         self.assertTrue(result["resumed"]); no_network.assert_not_called(); self.assertEqual((self.data / ARCHIVE_NAME).read_bytes(), self.payload)
 

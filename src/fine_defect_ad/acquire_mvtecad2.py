@@ -24,6 +24,7 @@ ARCHIVE_URL = "https://www.mydrive.ch/shares/150997/701c90d3aea6588f404936e32a67
 ANOMALIB_PROVENANCE = "https://github.com/open-edge-platform/anomalib/blob/3759687e76395c4d6d239552d3bf6d72e003da78/src/anomalib/data/datamodules/image/mvtecad2.py"
 OFFICIAL_FORM_URL = "https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2"
 ACK_FIELDS = {"status", "official_form_url", "license", "noncommercial", "accepted_at"}
+AUDIT_METHOD = "tarfile-r|gz-member-size-count-sha256-compressed-stream"
 
 
 def _under(child: Path, parent: Path) -> bool:
@@ -89,33 +90,45 @@ def archive_plan(run_id: str) -> dict:
     }
 
 
+class _CountingReader:
+    def __init__(self, stream):
+        self.stream = stream; self.bytes = 0; self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        block = self.stream.read(size)
+        self.bytes += len(block); self.digest.update(block)
+        return block
+
+
 def load_extraction_evidence(path: Path) -> dict:
-    """Accept only exact, independently measured tar extraction sizing."""
+    """Accept only metadata audit evidence bound to the pinned archive identity."""
     try:
         evidence = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise StorageBlocked("exact extraction sizing evidence is required") from exc
-    required = {"exact_uncompressed_bytes", "max_member_bytes", "derivation"}
+    required = {"archive_url", "archive_bytes", "archive_sha256", "audit_method", "exact_uncompressed_bytes", "max_member_bytes", "member_count"}
     if not isinstance(evidence, dict) or set(evidence) != required:
-        raise StorageBlocked("extraction sizing evidence must contain exact bytes, max member, and derivation")
-    total, member, derivation = evidence["exact_uncompressed_bytes"], evidence["max_member_bytes"], evidence["derivation"]
-    if not isinstance(total, int) or total < 0 or not isinstance(member, int) or member < 0 or member > total or not isinstance(derivation, str) or not derivation:
+        raise StorageBlocked("extraction evidence must be a complete pinned metadata audit")
+    if (evidence["archive_url"], evidence["archive_bytes"], evidence["archive_sha256"], evidence["audit_method"]) != (ARCHIVE_URL, ARCHIVE_BYTES, ARCHIVE_SHA256, AUDIT_METHOD):
+        raise StorageBlocked("extraction evidence is not bound to the pinned archive")
+    total, member, count = evidence["exact_uncompressed_bytes"], evidence["max_member_bytes"], evidence["member_count"]
+    if not all(isinstance(value, int) and value >= 0 for value in (total, member, count)) or member > total or not count:
         raise StorageBlocked("invalid exact extraction sizing evidence")
     return evidence
-
 
 def acquisition_plan(run_id: str, extraction_evidence: dict) -> dict:
     archive = archive_plan(run_id)
     total, member = extraction_evidence["exact_uncompressed_bytes"], extraction_evidence["max_member_bytes"]
+    provenance = json.dumps({key: extraction_evidence[key] for key in ("archive_url", "archive_bytes", "archive_sha256", "audit_method")}, sort_keys=True)
     archive.update({
         "status": "DOWNLOAD_AUTHORIZED_PLAN",
         "allocations": [
             *archive["allocations"],
-            {"root": "data", "bytes": total, "kind": "persistent", "component_id": "mvtecad2-extraction", "source": extraction_evidence["derivation"], "exact_uncompressed_bytes_source": extraction_evidence["derivation"]},
-            {"root": "data", "bytes": member, "kind": "transient", "component_id": "mvtecad2-extraction-member", "source": extraction_evidence["derivation"]},
+            {"root": "data", "bytes": total, "kind": "persistent", "component_id": "mvtecad2-extraction", "source": provenance, "exact_uncompressed_bytes_source": provenance},
+            {"root": "data", "bytes": member, "kind": "transient", "component_id": "mvtecad2-extraction-member", "source": provenance},
         ],
     })
-    archive["reserve_evidence"]["runtime_or_source_citation"] = "archive plus exact extraction persistent bytes and maximum member transient bytes; " + extraction_evidence["derivation"]
+    archive["reserve_evidence"]["runtime_or_source_citation"] = "archive plus exact extraction persistent bytes and maximum member transient bytes; " + provenance
     return archive
 
 
@@ -127,12 +140,16 @@ def audit_metadata(*, terms_ack: Path, url: str = ARCHIVE_URL, opener: Callable 
     with opener(urllib.request.Request(url), timeout=60) as response:
         if response.status != 200 or response.headers.get("Content-Length") != str(ARCHIVE_BYTES):
             raise StorageBlocked("Content-Length does not match pinned archive size")
-        total = maximum = 0
-        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+        counted = _CountingReader(response)
+        total = maximum = count = 0
+        with tarfile.open(fileobj=counted, mode="r|gz") as archive:
             for member in archive:
-                total += member.size; maximum = max(maximum, member.size)
-    return {"status": "SIZING_AUDIT_ONLY_NOT_STORAGE_READY", "exact_uncompressed_bytes": total, "max_member_bytes": maximum,
-            "derivation": "tar stream member-size count from pinned archive; no archive body was written"}
+                total += member.size; maximum = max(maximum, member.size); count += 1
+        if counted.bytes != ARCHIVE_BYTES or counted.digest.hexdigest() != ARCHIVE_SHA256:
+            raise StorageBlocked("metadata audit compressed archive identity mismatch")
+    return {"status": "SIZING_AUDIT_ONLY_NOT_STORAGE_READY", "archive_url": ARCHIVE_URL, "archive_bytes": ARCHIVE_BYTES,
+            "archive_sha256": ARCHIVE_SHA256, "audit_method": AUDIT_METHOD, "exact_uncompressed_bytes": total,
+            "max_member_bytes": maximum, "member_count": count}
 
 def _hash_prefix(path: Path) -> tuple[hashlib._Hash, int]:
     digest = hashlib.sha256()
