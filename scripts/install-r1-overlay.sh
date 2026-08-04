@@ -5,16 +5,12 @@ set -euo pipefail
 : "${FINE_DEFECT_STORAGE_PLAN:?set to a source-backed storage plan}"
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 overlay="$FINE_DEFECT_VENV_ROOT/r1-overlay"
-PYTHONPATH="$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$FINE_DEFECT_HOST_PYTHON" - <<PY
-from fine_defect_ad.r1_overlay import admit_overlay_install
-from pathlib import Path
-admit_overlay_install(Path("$FINE_DEFECT_STORAGE_PLAN"), Path("$overlay"))
-PY
-mkdir -p "$overlay"
-"$FINE_DEFECT_HOST_PYTHON" -m pip install \
-  --target "$overlay" --no-deps --require-hashes --no-cache-dir --no-compile \
-  -r "$repo/requirements/r1-overlay.txt"
-PYTHONPATH="$overlay" "$FINE_DEFECT_HOST_PYTHON" - <<'PY'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$repo/src${PYTHONPATH:+:$PYTHONPATH}" "$FINE_DEFECT_HOST_PYTHON" -m fine_defect_ad.r1_overlay \
+  --plan "$FINE_DEFECT_STORAGE_PLAN" --overlay "$overlay" -- \
+  "$FINE_DEFECT_HOST_PYTHON" -m pip install \
+    --target "$overlay" --no-deps --require-hashes --no-cache-dir --no-compile \
+    -r "$repo/requirements/r1-overlay.txt"
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$overlay" "$FINE_DEFECT_HOST_PYTHON" - <<'PY'
 import json
 import anomalib, cv2, kornia, lightning, timm, torch, torchvision
 from anomalib.models import EfficientAd

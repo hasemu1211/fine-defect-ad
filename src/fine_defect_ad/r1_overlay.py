@@ -1,12 +1,25 @@
 """Storage admission boundary for the R1 package overlay installer."""
 from __future__ import annotations
 
+import argparse
+import errno
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any, Callable
+import subprocess
+from typing import Any, Callable, Sequence
 
-from .storage import Allocation, PreflightProof, StorageBlocked, _mount, preflight, require_proof, roots_from_env
+from .storage import (
+    Allocation,
+    PreflightProof,
+    RunInvalidated,
+    StorageBlocked,
+    _mount,
+    invalidate_run,
+    preflight,
+    require_proof,
+    roots_from_env,
+)
 
 OVERLAY_LOCK = "requirements/r1-overlay.txt"
 OVERLAY_LOCK_SHA256 = "700960caf7f1b5f55cde0f6d4fe53ef0efed1c96047ded9993b57e77d9115ccd"
@@ -65,8 +78,50 @@ def admit_overlay_install(plan_path: Path, overlay: Path) -> PreflightProof:
     return proof
 
 
+def _invalidated(proof: PreflightProof, overlay: Path) -> None:
+    invalidate_run(proof, run_id=proof.run_id, cause="ENOSPC", partial_path=overlay)
+    raise RunInvalidated("R1 overlay install invalidated by ENOSPC; use a new run ID")
+
+
 def install_after_admission(plan_path: Path, overlay: Path, install: Callable[[], None]) -> PreflightProof:
-    """Testable order boundary: no package callback executes without admission."""
+    """Run the material installer only under one admitted run; ENOSPC stops it permanently."""
     proof = admit_overlay_install(plan_path, overlay)
-    install()
+    try:
+        Path(overlay).mkdir(parents=True, exist_ok=True)
+        install()
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            _invalidated(proof, Path(overlay))
+        raise
+    except subprocess.CalledProcessError as exc:
+        error = (exc.stderr or b"").decode(errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+        if "no space left on device" in error.lower():
+            _invalidated(proof, Path(overlay))
+        raise
     return proof
+
+
+def install_command(plan_path: Path, overlay: Path, command: Sequence[str]) -> PreflightProof:
+    if not command:
+        raise StorageBlocked("installer command is required")
+    return install_after_admission(plan_path, overlay, lambda: subprocess.run(command, check=True, capture_output=True))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--overlay", type=Path, required=True)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    try:
+        proof = install_command(args.plan, args.overlay, command)
+    except (OSError, StorageBlocked, RunInvalidated, subprocess.CalledProcessError) as exc:
+        print(json.dumps({"status": "STOPPED_INCOMPLETE", "reason": str(exc)}, sort_keys=True))
+        return 2
+    print(json.dumps({"status": "READY", "run_id": proof.run_id, "overlay": str(args.overlay)}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
