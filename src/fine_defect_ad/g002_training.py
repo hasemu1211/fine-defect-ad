@@ -105,6 +105,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
     cause = None
+    artifact_hashes: dict[str, str] = {}
     try:
         with GpuLease(args.g002.lease_directory, args.run_id, "g002-training", defer_signals=True) as lease:
             import torch
@@ -116,6 +117,8 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                 def on_before_optimizer_step(self, trainer, module, optimizer):
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
+                    if trainer.global_step and trainer.global_step % interval == 0:
+                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
                     if lease.pending_signal:
                         artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
@@ -208,7 +211,7 @@ class TrainingArtifacts:
         return self._commit(f"g002-metrics-{self.run_id}.json", json.dumps(list(rows),sort_keys=True,allow_nan=False).encode())
 
     def final(self, record: Mapping[str, Any]) -> Path:
-        return self._commit(f"g002-attempt-{self.run_id}-{sha256(json.dumps(dict(record),sort_keys=True).encode()).hexdigest()}.json", json.dumps(dict(record),sort_keys=True,allow_nan=False).encode())
+        return self._commit(f"g002-attempt-{self.run_id}-{sha256(json.dumps(dict(record),sort_keys=True).encode()).hexdigest()}.json", json.dumps(dict(record),sort_keys=True,allow_nan=False).encode(), overwrite=False)
 
 def validate_slot_resume(checkpoint: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
     sidecar = checkpoint.with_suffix(checkpoint.suffix + ".json")
