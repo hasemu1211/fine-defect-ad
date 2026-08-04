@@ -1,0 +1,10 @@
+{
+  "status": "VERIFIED",
+  "upstream_seed_status": "ABSENT",
+  "upstream_evidence": "anomalib MVTec configuration specifies seed: null; no published numeric seed or deterministic Trainer flag was found",
+  "identity": "fine-defect-ad:R1:EfficientAD-S:anomalib-lib-v2.6.0:3759687e76395c4d6d239552d3bf6d72e003da78",
+  "identity_sha256": "243a4f42c479e64cedb07d1c7b9eb140c77532c08de948161e019b665f3829ae",
+  "derivation": "sha256(identity) first 32 bits masked to 31-bit",
+  "seed": 607801154,
+  "selection": "one primary run; no best-seed selection"
+}

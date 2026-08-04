@@ -10,9 +10,14 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 LOW_FPR_CLAIM_STATE = "INSUFFICIENT_EVIDENCE_FOR_LOW_FPR_CLAIM"
+PROTOCOL_BLOCKED_STATE = "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE"
+R1_SEED = 607_801_154
+R1_SEED_IDENTITY = "fine-defect-ad:R1:EfficientAD-S:anomalib-lib-v2.6.0:3759687e76395c4d6d239552d3bf6d72e003da78"
+R1_SEED_IDENTITY_SHA256 = "243a4f42c479e64cedb07d1c7b9eb140c77532c08de948161e019b665f3829ae"
+R1_SEED_DERIVATION = "sha256(identity) first 32 bits masked to 31-bit"
 _REQUIRED_CONFIG = frozenset({
     "image_size", "batch_size", "model_size", "learning_rate", "weight_decay",
-    "max_steps", "max_epochs", "normalization", "seeds", "pilot_steps",
+    "max_steps", "max_epochs", "normalization", "seeds", "seed_provenance", "pilot_steps",
 })
 
 
@@ -27,6 +32,7 @@ class EfficientADSConfig:
     max_epochs: int
     normalization: None | bool | str
     seeds: tuple[int, ...]
+    seed_provenance: Mapping[str, Any]
     pilot_steps: int
 
 
@@ -54,8 +60,8 @@ def validate_efficientad_s_config(config: EfficientADSConfig | Mapping[str, Any]
         raise ValueError("R1 requires max_steps=70000, max_epochs=1000, and pilot_steps=1000")
     if result.normalization not in (None, False):
         raise ValueError("R1 raw-score protocol forbids Normalize")
-    if not result.seeds or any(not isinstance(seed, int) for seed in result.seeds):
-        raise ValueError("R1 requires one or more deterministic integer seeds")
+    if result.seeds != (R1_SEED,) or not _valid_seed_provenance(result.seed_provenance):
+        raise ValueError("R1 requires the identity-derived seed and serialized provenance")
     return result
 
 
@@ -75,12 +81,31 @@ def _values(value: Any) -> Iterable[float]:
     yield number
 
 
+def _valid_seed_provenance(provenance: Mapping[str, Any]) -> bool:
+    return dict(provenance) == {
+        "status": "VERIFIED", "upstream_seed_status": "ABSENT",
+        "identity": R1_SEED_IDENTITY, "identity_sha256": R1_SEED_IDENTITY_SHA256,
+        "derivation": R1_SEED_DERIVATION, "seed": R1_SEED,
+    }
+
+
+def protocol_provenance_status(provenance: Mapping[str, Any]) -> dict[str, str]:
+    """Expose a blocking state instead of inventing an unverified protocol value."""
+    required = {"status", "source_locator", "source_sha256"}
+    if not required <= set(provenance) or provenance.get("status") != "VERIFIED":
+        return {"claim_state": PROTOCOL_BLOCKED_STATE}
+    digest = provenance["source_sha256"]
+    if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
+        return {"claim_state": PROTOCOL_BLOCKED_STATE}
+    return {"claim_state": "VERIFIED"}
+
+
 def _comparator(provenance: Mapping[str, Any]) -> str:
-    if "comparator" not in provenance:
-        raise ValueError("threshold comparator must be supplied by provenance")
-    comparator = provenance["comparator"]
+    if protocol_provenance_status(provenance)["claim_state"] != "VERIFIED":
+        raise ValueError("threshold comparator is blocked pending verified provenance")
+    comparator = provenance.get("comparator")
     if comparator not in {">", ">="}:
-        raise ValueError("provenance comparator must be '>' or '>='")
+        raise ValueError("verified provenance comparator must be '>' or '>='")
     return comparator
 
 
@@ -113,11 +138,18 @@ def raw_image_score(raw_map: Any) -> float:
         raise ValueError("raw map cannot be empty") from exc
 
 
-def threshold_raw_map(raw_map: Any, threshold: RawThreshold) -> tuple[Any, bool, float]:
-    """Return the original map, pixel decisions, and max-pixel image score under one threshold."""
-    pixels = tuple(threshold.is_positive(score) for score in _values(raw_map))
+def _pixel_decisions(raw_map: Any, threshold: RawThreshold) -> Any:
+    values = raw_map.tolist() if hasattr(raw_map, "tolist") else raw_map
+    if isinstance(values, (list, tuple)):
+        return tuple(_pixel_decisions(value, threshold) for value in values)
+    return threshold.is_positive(float(values))
+
+
+def threshold_raw_map(raw_map: Any, threshold: RawThreshold) -> tuple[Any, Any, bool, float]:
+    """Return the original map, shape-preserving pixel decisions, and max-pixel verdict."""
+    decisions = _pixel_decisions(raw_map, threshold)
     score = raw_image_score(raw_map)
-    return raw_map, any(pixels), score
+    return raw_map, decisions, threshold.is_positive(score), score
 
 
 def clopper_pearson_upper(positives: int, total: int, confidence: float) -> float:

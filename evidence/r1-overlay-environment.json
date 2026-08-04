@@ -1,0 +1,15 @@
+{
+  "base_python": "$FINE_DEFECT_HOST_PYTHON",
+  "overlay_root": "$FINE_DEFECT_VENV_ROOT/r1-overlay",
+  "lock": "requirements/r1-overlay.txt",
+  "installation": ["pip", "--target", "$FINE_DEFECT_VENV_ROOT/r1-overlay", "--no-deps", "--require-hashes", "--no-cache-dir", "--no-compile"],
+  "storage_basis": {
+    "compressed_download_bytes": 136329100,
+    "exact_archive_file_bytes": 381660959,
+    "maximum_package_exact_archive_bytes": 159488055,
+    "archive_provenance": "remote wheel central-directory; sdist full-stream"
+  },
+  "requested_package": {"name": "anomalib", "version": "2.6.0", "sha256": "0395d2e2ad859fb45b9c4544479639afe5d6aaada5e2aefc460bb65b638bd972"},
+  "smoke": {"status": "READY", "anomalib": "2.6.0", "efficient_ad": "EfficientAd", "lightning": "2.6.5", "kornia": "0.8.3", "opencv": "5.0.0", "timm": "1.0.28", "torch": "2.7.0+cu128", "torchvision": "0.22.0+cu128", "cuda_available": true},
+  "constraints": ["base torch/torchvision are reused unchanged", "no torch, torchvision, CUDA, dataset, teacher, or Imagenette artifact is locked"]
+}
