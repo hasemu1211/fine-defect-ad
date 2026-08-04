@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import math
 import platform
 import resource
 from pathlib import Path
@@ -15,12 +16,18 @@ import statistics
 import time
 from typing import Any, Callable, Mapping
 
-from .gpu_lock import GpuLease
+from .gpu_lock import BusyError, GpuLease
 
 PILOT_STEPS = 1_000
 MAX_STEPS = 70_000
 READY = "READY"
 STOPPED_INCOMPLETE = "STOPPED_INCOMPLETE"
+REQUIRED_PROTOCOL_FIELDS = ("anomalib_version", "anomalib_commit", "config_hash", "seed_provenance_hash", "precision")
+REQUIRED_PEAK_FIELDS = ("peak_host_rss_bytes", "peak_gpu_allocated_bytes", "peak_gpu_reserved_bytes")
+
+
+class MeasurementError(ValueError):
+    """A callback provided no usable measured value."""
 
 
 def pilot_step_budget(train_loader: object) -> int:
@@ -38,9 +45,11 @@ def median_step_seconds(timestamps: list[float]) -> float:
     """Calculate step time from actual completion timestamps, never a guess."""
     if len(timestamps) < 2:
         raise ValueError("at least two measured step timestamps are required")
+    if any(not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp) for timestamp in timestamps):
+        raise ValueError("step timestamps must be finite numeric")
     intervals = [later - earlier for earlier, later in zip(timestamps, timestamps[1:])]
     if any(interval < 0 for interval in intervals):
-        raise ValueError("step timestamps must be nondecreasing")
+        raise MeasurementError("step timestamps must be nondecreasing")
     return statistics.median(intervals)
 
 
@@ -52,8 +61,9 @@ def estimate_eta_seconds(*, total_steps: int, step_timestamps: list[float],
         raise ValueError("total_steps must be a nonnegative integer")
     if setup_overhead_seconds is None or validation_overhead_seconds is None:
         raise ValueError("setup and validation overhead must be explicitly measured")
-    if setup_overhead_seconds < 0 or validation_overhead_seconds < 0:
-        raise ValueError("measured overhead cannot be negative")
+    if (not math.isfinite(setup_overhead_seconds) or not math.isfinite(validation_overhead_seconds)
+            or setup_overhead_seconds < 0 or validation_overhead_seconds < 0):
+        raise ValueError("measured overhead must be finite and nonnegative")
     return total_steps * median_step_seconds(step_timestamps) + setup_overhead_seconds + validation_overhead_seconds
 
 
@@ -66,8 +76,9 @@ def host_rss_bytes() -> int:
 def _json_value(value: Any, name: str) -> float | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be numeric or None")
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+            or value < 0):
+        raise MeasurementError(f"{name} must be finite nonnegative numeric or None")
     return float(value)
 
 
@@ -77,6 +88,7 @@ class PilotEvidence:
     run_id: str
     command: str
     planned_steps: int
+    protocol_metadata: Mapping[str, str] | None = None
     setup_overhead_seconds: float | None = None
     validation_overhead_seconds: float | None = None
     step_timestamps: list[float] = field(default_factory=list)
@@ -97,12 +109,12 @@ class PilotEvidence:
                     host_rss_bytes: float | None = None,
                     gpu_allocated_bytes: float | None = None,
                     gpu_reserved_bytes: float | None = None) -> None:
-        if not isinstance(timestamp, (int, float)):
-            raise ValueError("timestamp must be numeric")
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+            raise MeasurementError("timestamp must be finite numeric")
         if self.step_timestamps and timestamp < self.step_timestamps[-1]:
-            raise ValueError("step timestamps must be nondecreasing")
+            raise MeasurementError("step timestamps must be nondecreasing")
         if not isinstance(gradients_finite, bool):
-            raise ValueError("gradients_finite must be measured as a bool")
+            raise MeasurementError("gradients_finite must be measured as a bool")
         self.step_timestamps.append(float(timestamp))
         self.gradient_finite = gradients_finite if self.gradient_finite is None else self.gradient_finite and gradients_finite
         for field_name, value in (("peak_host_rss_bytes", host_rss_bytes),
@@ -119,10 +131,18 @@ class PilotEvidence:
     def to_record(self, termination_cause: str | None = None) -> dict[str, Any]:
         cause = termination_cause or self.termination_cause
         completed = len(self.step_timestamps)
+        missing_protocol = [key for key in REQUIRED_PROTOCOL_FIELDS
+                            if not isinstance((self.protocol_metadata or {}).get(key), str)
+                            or not (self.protocol_metadata or {})[key]]
+        missing_peaks = [key for key in REQUIRED_PEAK_FIELDS if getattr(self, key) is None]
         if self.gradient_finite is False:
             cause = cause or "GRADIENT_NONFINITE"
         elif completed != PILOT_STEPS:
             cause = cause or f"PILOT_STEPS_{completed}_OF_{PILOT_STEPS}"
+        elif missing_protocol:
+            cause = cause or "PROTOCOL_METADATA_MISSING:" + ",".join(missing_protocol)
+        elif missing_peaks:
+            cause = cause or "REQUIRED_MEASUREMENTS_MISSING:" + ",".join(missing_peaks)
         elif self.setup_overhead_seconds is None or self.validation_overhead_seconds is None:
             cause = cause or "PILOT_OVERHEAD_UNMEASURED"
         status = READY if cause is None else STOPPED_INCOMPLETE
@@ -142,7 +162,9 @@ class PilotEvidence:
             "peak_host_rss_bytes": self.peak_host_rss_bytes,
             "peak_gpu_allocated_bytes": self.peak_gpu_allocated_bytes,
             "peak_gpu_reserved_bytes": self.peak_gpu_reserved_bytes,
-            "gradient_finite": self.gradient_finite, "lease_events": self.lease_events,
+            "gradient_finite": self.gradient_finite, "protocol_metadata": dict(self.protocol_metadata or {}),
+            **{key: (self.protocol_metadata or {}).get(key) for key in REQUIRED_PROTOCOL_FIELDS},
+            "lease_events": self.lease_events,
         }
         json.dumps(record, allow_nan=False)
         return record
@@ -163,12 +185,13 @@ def lease_events(directory: Path, run_id: str) -> list[dict[str, Any]]:
 
 def run_pilot(*, lease_directory: Path, run_id: str, command: str, train_loader: object,
               setup: Callable[[], None], step: Callable[[], Mapping[str, Any]],
-              validate: Callable[[], None], clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
+              validate: Callable[[], None], protocol_metadata: Mapping[str, str] | None = None,
+              clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
     """Execute exactly the future runner boundary under one GPU lease.
 
     `step` returns measured ``gradients_finite`` and optional RSS/GPU byte values.
     """
-    evidence = PilotEvidence(run_id, command, pilot_step_budget(train_loader))
+    evidence = PilotEvidence(run_id, command, pilot_step_budget(train_loader), protocol_metadata)
     cause: str | None = None
     try:
         with GpuLease(lease_directory, run_id, command):
@@ -184,6 +207,10 @@ def run_pilot(*, lease_directory: Path, run_id: str, command: str, train_loader:
                     break
             if cause is None:
                 started = clock(); validate(); evidence.record_validation(clock() - started)
+    except BusyError:
+        raise
+    except MeasurementError as exc:
+        cause = cause or f"MEASUREMENT_INVALID:{exc}"
     except Exception as exc:
         cause = cause or f"RUNNER_EXCEPTION:{type(exc).__name__}"
     evidence.record_lease_events(lease_events(lease_directory, run_id))
