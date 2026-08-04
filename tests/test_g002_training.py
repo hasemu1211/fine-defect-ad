@@ -171,13 +171,14 @@ class TrainingArtifactTests(TestCase):
                 global_step=70000; callbacks=[]; current_epoch=0; optimizers=[SimpleNamespace(param_groups=[{'lr':1.0}])]; callback_metrics={}
                 def fit(self,*a,**k):
                     [cb.on_train_batch_end(self,None,None,None,0) for cb in self.callbacks if hasattr(cb,"on_train_batch_end")]
-                    raise RuntimeError("SIGTERMException")
+                    class DeferredSignalExit(SystemExit): pass
+                    raise DeferredSignalExit()
             runtime=lambda *a,**k:(object(),object(),Trainer(),None)
             proof=PreflightProof('run',{'artifact':str(root)},'f',datetime.now(timezone.utc).isoformat(),{},[],{'reserve_bytes':0})
             torch=SimpleNamespace(cuda=SimpleNamespace(max_memory_allocated=lambda:0,max_memory_reserved=lambda:0),isfinite=lambda x:x)
             with patch('fine_defect_ad.g002_training.training_identity',return_value={'x':1}), patch('fine_defect_ad.g002_training.validate_training_lease'):
                 record=run_training(args,admit_pilot_fn=lambda _:pilot,preflight_fn=lambda **k:proof,lease_factory=Lease,runtime_factory=runtime,artifacts_factory=Art,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'run','command':'g002-training'},{'state':'released','run_id':'run','command':'g002-training','outcome':'signal:15'}],torch_module=torch,callback_base=object)
-            self.assertEqual(record['status'],'STOPPED_INCOMPLETE'); self.assertEqual(record['termination_cause'],'INTERRUPTED_RESUMABLE'); self.assertIn('final',record['artifacts'])
+            self.assertEqual(record['status'],'STOPPED_INCOMPLETE'); self.assertEqual(record['termination_cause'],'INTERRUPTED_RESUMABLE'); self.assertEqual(set(record['artifacts']), {'checkpoint','sidecar','metrics','final'})
 
     def test_signal_checkpoint_failure_is_not_resumable(self):
         from datetime import datetime, timezone

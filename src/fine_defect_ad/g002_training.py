@@ -146,8 +146,10 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
                     cause = "RUNNER:SIGNAL_CHECKPOINT_OR_METRICS_MISSING"
                 else:
                     artifact_hashes = {key: file_sha256(path) for key, path in committed.items()}
-        else:
+        elif isinstance(exc, Exception):
             cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
+        else:
+            raise
     try:
         expected = (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal
                     else "exception" if cause and cause.startswith(("RUNNER:", "OOM")) else "normal")
