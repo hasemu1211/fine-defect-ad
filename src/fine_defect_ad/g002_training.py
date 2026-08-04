@@ -40,7 +40,7 @@ def training_identity(args: G002Args) -> dict[str, Any]:
     return {"teacher_sha256": assets["teacher_small"]["sha256"], "imagenette": "verified-local-imagefolder",
             "data": assets["file_identity"], "protocol": expected_pilot_protocol_metadata(),
             "overlay_lock_sha256": file_sha256(lock), "git": git, "git_dirty": dirty,
-            "schedule": {"max_steps": MAX_STEPS, "max_epochs": 1000}, "lineage": args.run_id}
+            "schedule": {"max_steps": MAX_STEPS, "max_epochs": 1000}}
 
 def require_artifact_child(path: Path, artifact: Path) -> Path:
     resolved, root = Path(path).resolve(), Path(artifact).resolve()
@@ -179,7 +179,7 @@ class TrainingArtifacts:
     def _commit(self, name: str, payload: bytes) -> Path:
         path = require_artifact_child(self.artifact_root / name, self.artifact_root)
         source = f"exact in-memory {name} bytes={len(payload)} sha256={sha256(payload).hexdigest()}"
-        proof = self.admit(run_id=self.run_id, allocations=[Allocation("artifact", len(payload), "persistent", source, "g002-training-artifact"), Allocation("artifact", len(payload), "transient", source, "g002-training-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":len(payload),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        proof = self.admit(run_id=self.run_id, allocations=[Allocation("artifact", len(payload), "persistent", source, "g002-training-artifact-final"), Allocation("artifact", len(payload), "transient", source, "g002-training-artifact-incoming")], reserve_bytes=len(payload), reserve_evidence={"max_pending_atomic_write_bytes":len(payload),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
         if Path(proof.roots["artifact"]).resolve() != self.artifact_root:
             raise TrainingBlocked("fresh proof artifact root changed")
         result = self.write(path, payload, proof=proof, run_id=self.run_id, overwrite=False)
@@ -191,7 +191,7 @@ class TrainingArtifacts:
         if not 0 <= step <= MAX_STEPS: raise TrainingBlocked("checkpoint step invalid")
         payload = serialize_checkpoint()
         if not isinstance(payload, bytes) or not payload: raise TrainingBlocked("checkpoint serializer returned no bytes")
-        checkpoint = self._commit(f"g002-last-{self.run_id}.ckpt", payload)
+        checkpoint = self._commit(f"g002-last-{self.run_id}-{step % 2}.ckpt", payload)
         sidecar = {"checkpoint_sha256": sha256(payload).hexdigest(), "identity_sha256": self.identity_hash,
                    "pilot_sha256": PILOT_SHA256, "global_step": step, "lineage": self.run_id,
                    "resume_exactness": "NOT_ESTABLISHED"}
