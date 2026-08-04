@@ -27,3 +27,11 @@ class G002TrainingTests(TestCase):
             self.assertEqual(validate_resume(checkpoint, sidecar)['resume_exactness'], 'NOT_ESTABLISHED')
             sidecar.write_text('{}')
             with self.assertRaises(TrainingBlocked): validate_resume(checkpoint, sidecar)
+
+    def test_deferred_lease_signal_is_recorded_until_callback_boundary(self):
+        from fine_defect_ad.gpu_lock import GpuLease
+        with TemporaryDirectory() as raw:
+            lease = GpuLease(Path(raw), "run", "command", defer_signals=True)
+            with lease:
+                lease._signal(15, None)
+                self.assertEqual(lease.pending_signal, 15)

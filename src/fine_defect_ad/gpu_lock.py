@@ -9,8 +9,9 @@ class BusyError(RuntimeError):
     def __str__(self) -> str: return f'BUSY holder_command={self.holder_command} holder_run_id={self.holder_run_id}'
 
 class GpuLease:
-    def __init__(self, directory: Path, run_id: str, command: str):
-        self.directory, self.run_id, self.command = Path(directory), run_id, command
+    def __init__(self, directory: Path, run_id: str, command: str, *, defer_signals: bool = False):
+        self.directory, self.run_id, self.command, self.defer_signals = Path(directory), run_id, command, defer_signals
+        self.pending_signal: int | None = None
         self.lock_path = self.directory / 'gpu-heavy.lock'; self.metadata_path = self.directory / 'gpu-heavy-holder.json'; self._fd = None; self._old_signals = {}
     @staticmethod
     def _now() -> str: return datetime.now(timezone.utc).isoformat()
@@ -37,6 +38,9 @@ class GpuLease:
         self._atomic_json(self.metadata_path, event)
         fcntl.flock(self._fd, fcntl.LOCK_UN); os.close(self._fd); self._fd = None
     def _signal(self, signum: int, _frame: object) -> None:
+        if self.defer_signals:
+            self.pending_signal = signum
+            return
         self._release(f'signal:{signum}')
         raise SystemExit(128 + signum)
     def __enter__(self) -> 'GpuLease':
