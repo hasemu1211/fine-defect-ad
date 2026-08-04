@@ -1,13 +1,26 @@
 {
   "counts": {
-    "TESTpriv": {"unknown": 142},
-    "TESTpriv,mix": {"unknown": 142},
-    "TESTpub": {"anomalous": 90, "normal": 24},
-    "train": {"anomalous": 0, "normal": 137},
-    "validation": {"anomalous": 0, "normal": 19}
+    "TESTpriv": {
+      "unknown": 142
+    },
+    "TESTpriv,mix": {
+      "unknown": 142
+    },
+    "TESTpub": {
+      "anomalous": 90,
+      "normal": 24
+    },
+    "train": {
+      "anomalous": 0,
+      "normal": 137
+    },
+    "validation": {
+      "anomalous": 0,
+      "normal": 19
+    }
   },
   "dataset": "mvtec_ad_2/sheet_metal",
-  "manifest_sha256": "3134ea4a2d399271fe09580488c97795293d5b412afe09889b6f187bf368a112",
-  "run_id": "r1-sheet-metal-manifest-20260804a",
+  "manifest_sha256": "59879101f61b17aaefda0701e935e8c4adf37cf2d2b3f7399d799a81c1dbbbcd",
+  "run_id": "r1-sheet-metal-manifest-20260804b",
   "sample_count": 554
 }

@@ -114,7 +114,7 @@ def _add_samples(root: Path, directory: str, split: str, status: str) -> list[Sa
         relative = file.relative_to(root).as_posix()
         number, lighting, shift = _metadata(PurePosixPath(relative))
         # Only private regular/mixed capture variants describe the same scene ID.
-        pair = f"private:{number}" if split in PRIVATE_SPLITS else f"{split}:{status}:{number}:{lighting}:{shift}"
+        pair = f"private:{number}" if split in PRIVATE_SPLITS else f"TESTpub:{status}:{number}" if split == "TESTpub" else f"{split}:{number}"
         result.append(Sample(f"{split}:{relative}", pair, split, status, lighting, shift, relative, _sha256(file)))
     return result
 
@@ -152,7 +152,7 @@ def write_sheet_metal_manifest(dataset_root: Path | str, run_id: str) -> dict:
     if destination.exists(): raise FileExistsError(f"refusing to overwrite existing manifest: {destination.name}")
     proof = preflight(run_id=run_id, allocations=[Allocation("artifact", len(payload), "persistent", "exact JSONL byte count", "sheet-metal-manifest-jsonl")], reserve_bytes=0,
                       reserve_evidence={"max_pending_atomic_write_bytes": 0, "measured_high_water_bytes": 0, "runtime_or_source_citation": "manifest payload is atomically written once"})
-    result = atomic_write(destination, payload, proof=proof, run_id=run_id)
+    result = atomic_write(destination, payload, proof=proof, run_id=run_id, overwrite=False)
     if result["status"] != "READY": raise RuntimeError(f"manifest write did not complete: {result['status']}")
     return public_summary(samples, run_id)
 

@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 import errno, json, os, signal, subprocess, sys, tempfile, time, unittest
 from unittest.mock import patch
+import pytest
 from fine_defect_ad.evidence import DER_REQUIRED, validate_decision_register, validate_der, validate_evidence
 from fine_defect_ad.gpu_lock import BusyError, GpuLease, benchmark_window
 from fine_defect_ad.manifest import PUBLISHED_PRIVATE_AGGREGATE_COUNTS, SPLIT_COUNTS, Sample, canonical_manifest_hash, validate_manifest
@@ -121,3 +122,16 @@ class R0Tests(unittest.TestCase):
   self.assertIn('max_batch_size: 1',_MODEL_PROGRAM)
   validate_evidence({'run_id':'triton','timestamp':'t','command':'docker run pinned digest','status':'READY','limitations':[],'lock_mode':'fcntl.flock'})
 if __name__=='__main__': unittest.main()
+
+
+def test_atomic_write_no_clobber_preserves_existing_destination():
+ raw,roots,env,mount,docker=R0Tests()._storage()
+ with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',return_value=docker):
+  reserve={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'}
+  proof=preflight(run_id='r',allocations=[Allocation('artifact',2,'persistent','test','manifest')],reserve_bytes=0,reserve_evidence=reserve)
+  destination=roots['artifact']/'immutable.jsonl'
+  self_result=atomic_write(destination,b'first',proof=proof,run_id='r',overwrite=False)
+  assert self_result['status']=='READY'
+  with pytest.raises(FileExistsError):
+   atomic_write(destination,b'second',proof=proof,run_id='r',overwrite=False)
+  assert destination.read_bytes()==b'first'

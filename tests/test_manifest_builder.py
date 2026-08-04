@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import tempfile
 
@@ -36,6 +37,8 @@ def test_builder_is_deterministic_image_only_and_private_pairs_match():
         assert canonical_manifest_hash(samples) == canonical_manifest_hash(build_sheet_metal_manifest(root))
         assert {sample.path for sample in samples if "ground_truth" in sample.path} == set()
         assert {s.scene_pair_id for s in samples if s.split == "TESTpriv"} == {s.scene_pair_id for s in samples if s.split == "TESTpriv,mix"}
+        public_pairs = {s.scene_pair_id for s in samples if s.split == "TESTpub"}
+        assert len(public_pairs) == 19
         assert all(not Path(s.path).is_absolute() for s in samples)
         assert manifest_jsonl(samples).count(b"\n") == 554
         assert public_summary(samples, "r1")["counts"] == SPLIT_COUNTS
@@ -49,7 +52,8 @@ def test_builder_fails_closed_when_bad_mask_is_missing():
             build_sheet_metal_manifest(root)
 
 
-@pytest.mark.skipif(not Path("/media/codelab/4CECCBE8ECCBCB02/fine-defect-ad-storage/data/mvtec_ad_2/mvtec_ad_2/sheet_metal").is_dir(), reason="authorized dataset unavailable")
-def test_authorized_sheet_metal_is_read_only_buildable():
-    samples = build_sheet_metal_manifest("/media/codelab/4CECCBE8ECCBCB02/fine-defect-ad-storage/data/mvtec_ad_2/mvtec_ad_2/sheet_metal")
+def test_opt_in_authorized_sheet_metal_is_read_only_buildable():
+    root = os.environ.get("FINE_DEFECT_SHEET_METAL_TEST_ROOT")
+    if not root: pytest.skip("set FINE_DEFECT_SHEET_METAL_TEST_ROOT for authorized read-only dataset validation")
+    samples = build_sheet_metal_manifest(root)
     assert len(samples) == 554

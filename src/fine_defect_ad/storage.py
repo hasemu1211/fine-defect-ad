@@ -163,13 +163,20 @@ def invalidate_run(proof: PreflightProof, *, run_id: str, cause: str, partial_pa
         pass  # ENOSPC can prevent evidence persistence, but never permits continuation.
     return record
 
-def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, run_id: str) -> dict:
+def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, run_id: str, overwrite: bool = True) -> dict:
     require_proof(proof, run_id=run_id); destination = Path(destination).resolve(); artifact = Path(proof.roots['artifact']).resolve()
     if not _under(destination, artifact): raise StorageBlocked('material writes are restricted to artifact root')
-    temporary = destination.with_name('.' + destination.name + '.partial')
+    fd, raw_temporary = tempfile.mkstemp(dir=destination.parent, prefix='.' + destination.name + '.', suffix='.partial')
+    temporary = Path(raw_temporary)
     try:
-        with open(temporary, 'wb') as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
-        os.replace(temporary, destination); return {'status':READY, 'run_id':run_id, 'path':str(destination)}
+        with os.fdopen(fd, 'wb') as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+        if overwrite: os.replace(temporary, destination)
+        else:
+            # link(2) creates destination iff absent; unlike exists()+replace it cannot clobber a concurrent writer.
+            os.link(temporary, destination); temporary.unlink()
+        return {'status':READY, 'run_id':run_id, 'path':str(destination)}
     except OSError as exc:
         if exc.errno != errno.ENOSPC: raise
         return invalidate_run(proof, run_id=run_id, cause='ENOSPC', partial_path=temporary)
+    finally:
+        temporary.unlink(missing_ok=True)
