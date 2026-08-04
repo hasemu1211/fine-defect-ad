@@ -50,7 +50,7 @@ def require_artifact_child(path: Path, artifact: Path) -> Path:
 
 def derived_write_bound(identity: Mapping[str, Any]) -> tuple[int, str]:
     # Exact serialized identity is the durable sidecar/evidence floor; checkpoint probe is required before READY.
-    size = len(json.dumps(dict(identity), sort_keys=True).encode(), overwrite=False)
+    size = len(json.dumps(dict(identity), sort_keys=True).encode())
     return max(4096, size * 4), "serialized identity sidecar/evidence bytes x4; checkpoint size measured after save"
 
 
@@ -155,7 +155,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, required=True); parser.add_argument("--teacher-small", type=Path, required=True); parser.add_argument("--imagenette-root", type=Path, required=True); parser.add_argument("--lease-directory", type=Path, required=True)
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
-if __name__ == "__main__": raise SystemExit(main())
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
     """Serialize Lightning's full connector checkpoint (loops/optimizers/RNG), not weights-only."""
@@ -228,3 +227,6 @@ def validate_training_lease(events: Sequence[Mapping[str, Any]], run_id: str, ou
         raise TrainingBlocked("training lease lifecycle missing")
     if any(event.get("run_id") != run_id or event.get("command") != "g002-training" for event in events) or events[1].get("outcome") != outcome:
         raise TrainingBlocked("training lease outcome mismatch")
+
+if __name__ == "__main__":
+    raise SystemExit(main())
