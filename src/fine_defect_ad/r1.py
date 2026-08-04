@@ -100,9 +100,8 @@ class RawThreshold:
     provenance: Mapping[str, Any]
 
     def is_positive(self, score: float) -> bool:
-        if self.comparator is None:
-            raise ValueError("pixel/image decisions are blocked pending verified comparator provenance")
-        return score > self.value if self.comparator == ">" else score >= self.value
+        """Refuse all decisions until the official comparator artifact is pinned."""
+        raise ValueError("pixel/image decisions are blocked pending verified comparator provenance")
 
 
 def calibrate_raw_threshold(validation_maps: Iterable[Any], provenance: Mapping[str, Any]) -> RawThreshold:

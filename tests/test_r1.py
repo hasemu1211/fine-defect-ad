@@ -7,7 +7,7 @@ from fine_defect_ad.r1 import (
     LOW_FPR_CLAIM_STATE, PROTOCOL_BLOCKED_STATE, R1_SEED, R1_SEED_DERIVATION,
     R1_SEED_IDENTITY, R1_SEED_IDENTITY_SHA256, audit_testpub_normal,
     calibrate_raw_threshold, clopper_pearson_upper, freeze_r1_contract,
-    raw_image_score, threshold_raw_map,
+    RawThreshold, raw_image_score, threshold_raw_map,
     validate_efficientad_s_config,
 )
 
@@ -42,6 +42,14 @@ class R1Tests(unittest.TestCase):
         self.assertIsNone(threshold.comparator)
         with self.assertRaisesRegex(ValueError, "blocked"): threshold_raw_map([[1]], threshold)
         with self.assertRaisesRegex(ValueError, "blocked"): audit_testpub_normal([[[1]]], threshold, confidence=.95, minimum_normal_samples=1)
+
+    def test_direct_comparator_construction_cannot_bypass_fail_closed_gate(self):
+        for comparator in (">", ">="):
+            threshold = RawThreshold(1.0, comparator, SELF_ASSERTED_COMPARATOR)
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                threshold.is_positive(2.0)
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                threshold_raw_map([[2.0]], threshold)
 
     def test_exact_bounds_and_conservative_public_audit(self):
         self.assertAlmostEqual(clopper_pearson_upper(0, 10, .95), 1 - .05 ** .1)
