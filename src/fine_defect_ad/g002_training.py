@@ -79,25 +79,27 @@ def public_attempt(run_id: str, pilot: Mapping[str, Any], *, cause: str | None =
             "resume_exactness": "NOT_ESTABLISHED", "termination_cause": cause}
 
 
-def run_training(args: TrainingArgs) -> dict[str, Any]:
+def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn=preflight,
+                 lease_factory=GpuLease, runtime_factory=_lazy_runtime,
+                 artifacts_factory=None, lease_event_loader=lease_events) -> dict[str, Any]:
     """Full fixed-schedule run; only integrity failures stop it before 70k."""
     try:
-        pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
+        pilot = admit_pilot_fn(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
         if args.resume_checkpoint: args = TrainingArgs(args.pilot_evidence, args.run_id, args.checkpoint_directory, args.metrics_path, args.g002, select_resume_slot(args.resume_checkpoint, identity))
         bootstrap = json.dumps({"run_id": args.run_id, "identity": identity, "lease_events_max": 2}, sort_keys=True).encode()
         source = f"exact canonical bootstrap bytes={len(bootstrap)} plus two bounded lease event records"
-        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", len(bootstrap), "persistent", source, "g002-bootstrap"), Allocation("artifact", 16_384, "persistent", source, "g002-lease-events")], reserve_bytes=len(bootstrap), reserve_evidence={"max_pending_atomic_write_bytes":len(bootstrap),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        proof = preflight_fn(run_id=args.run_id, allocations=[Allocation("artifact", len(bootstrap), "persistent", source, "g002-bootstrap"), Allocation("artifact", 16_384, "persistent", source, "g002-lease-events")], reserve_bytes=len(bootstrap), reserve_evidence={"max_pending_atomic_write_bytes":len(bootstrap),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
         artifact = Path(proof.roots["artifact"]); require_artifact_child(args.g002.lease_directory, artifact); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
     cause = None
     artifact_hashes: dict[str, str] = {}
     try:
-        with GpuLease(args.g002.lease_directory, args.run_id, "g002-training", defer_signals=True) as lease:
+        with lease_factory(args.g002.lease_directory, args.run_id, "g002-training", defer_signals=True) as lease:
             import torch
             from lightning.pytorch import Callback
-            artifacts = TrainingArtifacts(Path(proof.roots["artifact"]), args.run_id, identity)
+            artifacts = (artifacts_factory or TrainingArtifacts)(Path(proof.roots["artifact"]), args.run_id, identity)
             pending = {"signal": None}
             class SafetyMetrics(Callback):
                 def __init__(self): self.started = time.monotonic(); self.rows = []
@@ -117,7 +119,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                     if not all(math.isfinite(float(value)) for value in row.values() if isinstance(value, (int,float))): raise RuntimeError("NONFINITE_METRIC")
                     self.rows.append(row); artifacts.metrics(self.rows)
             from .pilot import PilotEvidence
-            model, module, trainer, _ = _lazy_runtime(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
+            model, module, trainer, _ = runtime_factory(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
             safety = SafetyMetrics()
             trainer.callbacks.append(safety)
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
@@ -132,7 +134,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
     try:
         expected = (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal
                     else "exception" if cause and cause.startswith(("RUNNER:", "OOM")) else "normal")
-        events = lease_events(args.g002.lease_directory, args.run_id)
+        events = lease_event_loader(args.g002.lease_directory, args.run_id)
         validate_training_lease(events, args.run_id, expected)
         record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
         record["artifacts"] = artifact_hashes
