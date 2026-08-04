@@ -82,7 +82,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
     try:
         pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
-        if args.resume_checkpoint: validate_slot_resume(args.resume_checkpoint, identity)
+        if args.resume_checkpoint: args = TrainingArgs(args.pilot_evidence, args.run_id, args.checkpoint_directory, args.metrics_path, args.g002, select_resume_slot(args.resume_checkpoint, identity))
         bootstrap = json.dumps({"run_id": args.run_id, "identity": identity, "lease_events_max": 2}, sort_keys=True).encode()
         source = f"exact canonical bootstrap bytes={len(bootstrap)} plus two bounded lease event records"
         proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", len(bootstrap), "persistent", source, "g002-bootstrap"), Allocation("artifact", 16_384, "persistent", source, "g002-lease-events")], reserve_bytes=len(bootstrap), reserve_evidence={"max_pending_atomic_write_bytes":len(bootstrap),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
@@ -219,8 +219,6 @@ def validate_training_lease(events: Sequence[Mapping[str, Any]], run_id: str, ou
     if any(event.get("run_id") != run_id or event.get("command") != "g002-training" for event in events) or events[1].get("outcome") != outcome:
         raise TrainingBlocked("training lease outcome mismatch")
 
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 def select_resume_slot(checkpoint: Path, identity: Mapping[str, Any]) -> Path:
     """Use the requested slot if valid, otherwise only its two-slot sibling."""
@@ -235,3 +233,6 @@ def select_resume_slot(checkpoint: Path, identity: Mapping[str, Any]) -> Path:
         except (OSError, ValueError, TrainingBlocked, json.JSONDecodeError): pass
     if not valid: raise TrainingBlocked("no valid sibling checkpoint slot")
     return max(valid, key=lambda item: item[0])[1]
+
+if __name__ == "__main__":
+    raise SystemExit(main())
