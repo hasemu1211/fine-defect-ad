@@ -14,7 +14,7 @@ class RunInvalidated(RuntimeError): pass
 
 @dataclass(frozen=True)
 class Allocation:
-    root: str; bytes: int | None; kind: str; source: str; component_id: str = ''
+    root: str; bytes: int | None; kind: str; source: str; component_id: str = ''; exact_uncompressed_bytes_source: str = ''
 
 @dataclass(frozen=True)
 class PreflightProof:
@@ -97,7 +97,10 @@ def _components(allocations: Iterable[Allocation], roots: dict[str, Path]) -> li
     for a in allocations:
         if a.root not in roots or a.kind not in {'persistent','transient'} or a.bytes is None or a.bytes < 0 or not a.component_id or a.source in {'', 'unknown'}:
             raise StorageBlocked('unknown/invalid allocation component')
+        if 'gzip isize' in a.source.lower() and not a.exact_uncompressed_bytes_source:
+            raise StorageBlocked('gzip ISIZE is not exact uncompressed-byte evidence; provide an exact count source')
         item = {'source':a.source, 'component_id':a.component_id, 'root':a.root, 'kind':a.kind, 'bytes':a.bytes}
+        if a.exact_uncompressed_bytes_source: item['exact_uncompressed_bytes_source'] = a.exact_uncompressed_bytes_source
         prior = seen.get(a.component_id)
         if prior is not None and prior != item: raise StorageBlocked(f'conflicting duplicate component {a.component_id}')
         seen[a.component_id] = item

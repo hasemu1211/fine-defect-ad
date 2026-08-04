@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "PENDING_TRITON_NGC_EULA_ACCEPTANCE_AND_PINNED_PULL",
+  "status": "PENDING_EXACT_TRITON_STORAGE_SIZING_NGC_EULA_ACCEPTANCE_AND_PINNED_PULL",
   "evidence": {
     "host_gpu": {
       "command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
@@ -30,7 +30,7 @@
     "triton_pull": {
       "image": "nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a",
       "platform": "linux/amd64",
-      "status": "PENDING_NVIDIA_NGC_EULA_ACCEPTANCE_AND_AUTHORIZED_PULL"
+      "status": "PENDING_EXACT_UNCOMPRESSED_LAYER_BYTE_COUNTS_NVIDIA_NGC_EULA_ACCEPTANCE_AND_AUTHORIZED_PULL"
     }
   },
   "direct_dependencies": []

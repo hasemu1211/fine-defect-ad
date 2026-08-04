@@ -74,6 +74,13 @@ class R0Tests(unittest.TestCase):
   with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',side_effect=[docker,{**docker,'evidence':{**docker['evidence'],'stdout':'new docker info SystemTime'}}]):
    proof=preflight(run_id='r',allocations=[Allocation('artifact',1,'persistent','x','x')],reserve_bytes=0,reserve_evidence={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'})
    require_proof(proof,run_id='r')
+ def test_gzip_isize_cannot_be_exact_uncompressed_allocation_evidence(self):
+  raw,roots,env,mount,docker=self._storage()
+  with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',return_value=docker):
+   with self.assertRaisesRegex(StorageBlocked,'gzip ISIZE is not exact'):
+    preflight(run_id='r',allocations=[Allocation('docker_root',1,'persistent','gzip ISIZE expanded size','image')],reserve_bytes=0,reserve_evidence={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'})
+   proof=preflight(run_id='r',allocations=[Allocation('docker_root',1,'persistent','gzip ISIZE cross-check','image',exact_uncompressed_bytes_source='streamed decompression byte count')],reserve_bytes=0,reserve_evidence={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'})
+   self.assertEqual(proof.components[0]['exact_uncompressed_bytes_source'],'streamed decompression byte count')
  def test_storage_enospc_invalidates_same_run(self):
   raw,roots,env,mount,docker=self._storage()
   with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',return_value=docker):
