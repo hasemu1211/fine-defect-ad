@@ -240,9 +240,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True); parser.add_argument("--terms-ack", type=Path)
     parser.add_argument("--destination", type=Path)
-    parser.add_argument("--plan", action="store_true"); parser.add_argument("--metadata-audit", action="store_true")
+    parser.add_argument("--plan", action="store_true"); parser.add_argument("--metadata-audit", action="store_true"); parser.add_argument("--extract", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.extract:
+            print(json.dumps(extract(run_id=args.run_id, destination=args.destination), sort_keys=True)); return 0
         if args.plan:
             plan = archive_plan(args.run_id)
             print(json.dumps(plan, sort_keys=True)); return 0
@@ -253,6 +255,64 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(download(run_id=args.run_id, terms_ack=args.terms_ack, destination=args.destination), sort_keys=True)); return 0
     except (OSError, StorageBlocked, urllib.error.URLError) as exc:
         print(json.dumps({"status": "STORAGE_BLOCKED", "workflow_status": STOPPED_INCOMPLETE, "reason": str(exc)})); return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+# Extraction is deliberately separate from acquisition: it never contacts the source URL.
+def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], dict]:
+    if not _validate_existing(archive_path):
+        raise StorageBlocked("verified final archive is required")
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+    total = maximum = 0; manifest = []
+    for member in members:
+        name = Path(member.name)
+        if member.name.startswith("/") or ".." in name.parts or not member.isfile() or member.issym() or member.islnk() or member.isdev() or member.isdir():
+            raise StorageBlocked("archive contains unsafe or non-regular member")
+        total += member.size; maximum = max(maximum, member.size); manifest.append({"name": member.name, "size": member.size})
+    if not members:
+        raise StorageBlocked("archive has no regular members")
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(members), "member_manifest_sha256": digest}
+
+
+def extract(*, run_id: str, destination: Path | None = None) -> dict:
+    """Safely extract the verified archive under data root; never overwrites or cleans."""
+    roots = roots_from_env(); archive_path = (roots["data"] / ARCHIVE_NAME).resolve()
+    target = (Path(destination) if destination else roots["data"] / "mvtec_ad_2").expanduser().resolve()
+    if not _under(target, roots["data"]) or target == roots["data"].resolve():
+        raise StorageBlocked("extraction destination must be a dedicated data-root descendant")
+    members, sizing = _inspect_local_archive(archive_path)
+    provenance = json.dumps({"archive_url": ARCHIVE_URL, "archive_bytes": ARCHIVE_BYTES, "archive_sha256": ARCHIVE_SHA256, "audit_method": "local-verified-tar-inspection"}, sort_keys=True)
+    plan = {"run_id": run_id, "allocations": [
+        {"root":"data","bytes":ARCHIVE_BYTES,"kind":"persistent","component_id":"mvtecad2-archive","source":ANOMALIB_PROVENANCE},
+        {"root":"data","bytes":sizing["exact_uncompressed_bytes"],"kind":"persistent","component_id":"mvtecad2-extraction","source":provenance,"exact_uncompressed_bytes_source":provenance},
+        {"root":"data","bytes":sizing["max_member_bytes"],"kind":"transient","component_id":"mvtecad2-extraction-member","source":provenance},
+    ], "reserve_bytes":0, "reserve_evidence":{"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":provenance}}
+    proof = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=0, reserve_evidence=plan["reserve_evidence"])
+    try:
+        require_proof(proof, run_id=run_id)
+        target.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for member in members:
+                final = (target / member.name).resolve()
+                if not _under(final, target) or final.exists():
+                    raise StorageBlocked("extraction refuses existing or escaped destination")
+                require_proof(proof, run_id=run_id)
+                final.parent.mkdir(parents=True, exist_ok=True)
+                partial = final.with_name("." + final.name + ".partial")
+                with archive.extractfile(member) as source, partial.open("xb") as output:
+                    for block in iter(lambda: source.read(1024 * 1024), b""):
+                        output.write(block)
+                    output.flush(); os.fsync(output.fileno())
+                os.replace(partial, final)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            return invalidate_run(proof, run_id=run_id, cause="ENOSPC", partial_path=target)
+        raise
+    return {"status": READY, "run_id": run_id, "archive_sha256": ARCHIVE_SHA256, "exact_uncompressed_bytes": sizing["exact_uncompressed_bytes"], "max_member_bytes": sizing["max_member_bytes"], "member_count": sizing["member_count"], "extracted_file_count": len(members), "extracted_bytes": sizing["exact_uncompressed_bytes"], "member_manifest_sha256": sizing["member_manifest_sha256"]}
 
 
 if __name__ == "__main__":

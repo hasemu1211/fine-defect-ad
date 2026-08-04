@@ -140,3 +140,44 @@ class AcquisitionTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+class ExtractionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); root = Path(self.tmp.name); self.data = root/'data'; self.artifact=root/'artifact'; self.data.mkdir(); self.artifact.mkdir()
+        self.archive = self.data / ARCHIVE_NAME
+        self.proof = PreflightProof('extract', {'artifact':str(self.artifact)}, 'x', '2026-08-04T00:00:00+00:00', {}, [{'component_id':'x'}], {})
+
+    def tearDown(self): self.tmp.cleanup()
+
+    def _tar(self, name='folder/file.txt', body=b'ok'):
+        with tarfile.open(self.archive, 'w:gz') as archive:
+            member=tarfile.TarInfo(name); member.size=len(body); archive.addfile(member, io.BytesIO(body))
+        return self.archive.read_bytes()
+
+    def test_safe_extraction_and_no_write_before_proof(self):
+        body=self._tar(); digest=hashlib.sha256(body).hexdigest()
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof', side_effect=StorageBlocked('no proof')):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract')
+        self.assertFalse((self.data/'mvtec_ad_2').exists())
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof'):
+            result=acquire.extract(run_id='extract')
+        self.assertEqual((self.data/'mvtec_ad_2/folder/file.txt').read_bytes(), b'ok'); self.assertEqual(result['extracted_file_count'], 1)
+
+    def test_traversal_and_existing_file_rejected(self):
+        body=self._tar('../escape', b'x'); digest=hashlib.sha256(body).hexdigest()
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract')
+        with tarfile.open(self.archive, 'w:gz') as archive:
+            member=tarfile.TarInfo('link'); member.type=tarfile.SYMTYPE; member.linkname='target'; archive.addfile(member)
+        body=self.archive.read_bytes(); digest=hashlib.sha256(body).hexdigest()
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract')
+        body=self._tar(); digest=hashlib.sha256(body).hexdigest(); (self.data/'mvtec_ad_2/folder').mkdir(parents=True); (self.data/'mvtec_ad_2/folder/file.txt').write_text('old')
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof'):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract')
+
+    def test_extraction_rename_enospc_invalidates(self):
+        body=self._tar(); digest=hashlib.sha256(body).hexdigest()
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof'), patch('fine_defect_ad.acquire_mvtecad2.os.replace', side_effect=OSError(errno.ENOSPC, 'full')):
+            result=acquire.extract(run_id='extract')
+        self.assertEqual(result['workflow_status'], 'STOPPED_INCOMPLETE'); self.assertTrue((self.artifact/'.invalidated-extract.json').exists())
