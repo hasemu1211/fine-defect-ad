@@ -102,10 +102,10 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                 def on_before_optimizer_step(self, trainer, module, optimizer):
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
-                    if trainer.global_step and trainer.global_step % interval == 0:
-                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
                     if lease.pending_signal:
                         artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
+                    elif trainer.global_step and trainer.global_step % interval == 0:
+                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
                     losses = {name: float(trainer.callback_metrics.get(name, float("nan"))) for name in ("train_loss", "train_st", "train_ae", "train_stae")}
@@ -128,7 +128,8 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     try:
-        expected = "normal" if cause is None else (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal else "exception")
+        expected = (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal
+                    else "exception" if cause and cause.startswith(("RUNNER:", "OOM")) else "normal")
         events = lease_events(args.g002.lease_directory, args.run_id)
         validate_training_lease(events, args.run_id, expected)
         record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
