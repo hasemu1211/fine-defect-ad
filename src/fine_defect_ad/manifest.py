@@ -8,12 +8,17 @@ from hashlib import sha256
 import json
 
 
+PRIVATE_SPLITS = frozenset({"TESTpriv", "TESTpriv,mix"})
 SPLIT_COUNTS = {
     "train": {"normal": 137, "anomalous": 0},
     "validation": {"normal": 19, "anomalous": 0},
     "TESTpub": {"normal": 24, "anomalous": 90},
-    "TESTpriv": {"normal": 36, "anomalous": 106},
-    "TESTpriv,mix": {"normal": 36, "anomalous": 106},
+    "TESTpriv": {"unknown": 142},
+    "TESTpriv,mix": {"unknown": 142},
+}
+# Published protocol aggregates, not local per-file labels.
+PUBLISHED_PRIVATE_AGGREGATE_COUNTS = {
+    split: {"normal": 36, "anomalous": 106} for split in PRIVATE_SPLITS
 }
 TEST_SPLITS = frozenset(SPLIT_COUNTS) - {"train", "validation"}
 
@@ -39,7 +44,8 @@ def validate_manifest(samples: list[Sample]) -> None:
     """Validate exact roles/counts plus identities/content leakage across test barriers."""
     required = {"sample_id", "scene_pair_id", "split", "anomaly_status", "lighting_id", "shift_status"}
     for sample in samples:
-        if sample.split not in SPLIT_COUNTS or sample.anomaly_status not in {"normal", "anomalous"}:
+        allowed_statuses = {"unknown"} if sample.split in PRIVATE_SPLITS else {"normal", "anomalous"}
+        if sample.split not in SPLIT_COUNTS or sample.anomaly_status not in allowed_statuses:
             raise ValueError(f"invalid manifest role: {sample!r}")
         if not all(getattr(sample, name) for name in required) or not sample.content_hash or not sample.path:
             raise ValueError(f"missing required manifest field: {sample!r}")

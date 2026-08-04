@@ -1,1 +1,23 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["sample_id","scene_pair_id","split","anomaly_status","lighting_id","shift_status","path","content_hash"],"properties":{"sample_id":{"type":"string","minLength":1},"scene_pair_id":{"type":"string","minLength":1},"split":{"enum":["train","validation","TESTpub","TESTpriv","TESTpriv,mix"]},"anomaly_status":{"enum":["normal","anomalous"]},"lighting_id":{"type":"string","minLength":1},"shift_status":{"type":"string","minLength":1},"path":{"type":"string"},"content_hash":{"type":"string"}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sample_id", "scene_pair_id", "split", "anomaly_status", "lighting_id", "shift_status", "path", "content_hash"],
+  "properties": {
+    "sample_id": {"type": "string", "minLength": 1},
+    "scene_pair_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["train", "validation", "TESTpub", "TESTpriv", "TESTpriv,mix"]},
+    "anomaly_status": {"enum": ["normal", "anomalous", "unknown"]},
+    "lighting_id": {"type": "string", "minLength": 1},
+    "shift_status": {"type": "string", "minLength": 1},
+    "path": {"type": "string"},
+    "content_hash": {"type": "string"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"split": {"enum": ["TESTpriv", "TESTpriv,mix"]}}, "required": ["split"]},
+      "then": {"properties": {"anomaly_status": {"const": "unknown"}}},
+      "else": {"properties": {"anomaly_status": {"enum": ["normal", "anomalous"]}}}
+    }
+  ]
+}

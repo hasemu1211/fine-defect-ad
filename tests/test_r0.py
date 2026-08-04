@@ -4,7 +4,7 @@ import errno, json, os, signal, subprocess, sys, tempfile, time, unittest
 from unittest.mock import patch
 from fine_defect_ad.evidence import DER_REQUIRED, validate_decision_register, validate_der, validate_evidence
 from fine_defect_ad.gpu_lock import BusyError, GpuLease, benchmark_window
-from fine_defect_ad.manifest import SPLIT_COUNTS, Sample, canonical_manifest_hash, validate_manifest
+from fine_defect_ad.manifest import PUBLISHED_PRIVATE_AGGREGATE_COUNTS, SPLIT_COUNTS, Sample, canonical_manifest_hash, validate_manifest
 from fine_defect_ad.runtime import collect_runtime_evidence, container_gpu_spike, discover_docker_storage
 from fine_defect_ad.storage import Allocation, ROOT_ENV, StorageBlocked, atomic_write, preflight, require_proof
 from fine_defect_ad.preflight import main as preflight_main
@@ -19,8 +19,15 @@ class R0Tests(unittest.TestCase):
   return out
  def test_manifest_roles_hash_path_and_leakage(self):
   xs=self.samples(); validate_manifest(xs); self.assertEqual(canonical_manifest_hash(xs),canonical_manifest_hash(xs[::-1]))
+  self.assertEqual(PUBLISHED_PRIVATE_AGGREGATE_COUNTS, {split:{'normal':36,'anomalous':106} for split in ('TESTpriv','TESTpriv,mix')})
   i=next(i for i,x in enumerate(xs) if x.split=='TESTpub'); xs[i]=replace(xs[i],sample_id=xs[0].sample_id)
   with self.assertRaisesRegex(ValueError,'leakage'): validate_manifest(xs)
+ def test_private_manifest_labels_are_unknown_only(self):
+  xs=self.samples()
+  private=next(i for i,x in enumerate(xs) if x.split=='TESTpriv'); xs[private]=replace(xs[private],anomaly_status='normal')
+  with self.assertRaisesRegex(ValueError,'invalid manifest role'): validate_manifest(xs)
+  xs=self.samples(); public=next(i for i,x in enumerate(xs) if x.split=='TESTpub'); xs[public]=replace(xs[public],anomaly_status='unknown')
+  with self.assertRaisesRegex(ValueError,'invalid manifest role'): validate_manifest(xs)
  def test_der_actual_register_and_schema_contract(self):
   item={k:'x' for k in DER_REQUIRED};item.update(decision_id='DEC-R0-1',status='proposed',drivers=[],alternatives=[]);validate_der(item)
   rows=validate_decision_register(Path('evidence/decision-register.yaml')); self.assertEqual(len(rows),2)
