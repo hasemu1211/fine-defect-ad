@@ -133,6 +133,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
             checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
             metrics_path = artifacts.metrics(safety.rows)
+            artifact_hashes = {"checkpoint": file_sha256(checkpoint_path), "sidecar": file_sha256(sidecar_path), "metrics": file_sha256(metrics_path)}
             if lease.pending_signal: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
 
