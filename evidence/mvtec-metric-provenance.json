@@ -68,6 +68,20 @@
           "locators": [
             "license text, line 1 onward"
           ]
+        },
+        {
+          "path": "mvtec_ad_evaluation/generic_util.py",
+          "sha256": "96ed3135f23f49a75a767891dd1e3c975973590af31cad0cc39f655f6d76fef2",
+          "locators": [
+            "trapezoid, lines 18-82"
+          ]
+        },
+        {
+          "path": "mvtec_ad_evaluation/pro_curve_util.py",
+          "sha256": "80feff3b5c96023a93ec3a28494583c7732f639547f572982952bb6d0469a29d",
+          "locators": [
+            "compute_pro, lines 10-130"
+          ]
         }
       ]
     }
