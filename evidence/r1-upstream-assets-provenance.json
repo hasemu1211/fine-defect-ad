@@ -1,0 +1,30 @@
+{
+  "anomalib_code": {
+    "license": "Apache-2.0",
+    "source": "https://github.com/open-edge-platform/anomalib"
+  },
+  "imagenette": {
+    "content_length": 1557161267,
+    "license": "Apache-2.0",
+    "sha256": "6cbfac238434d89fe99e651496f0812ebc7a10fa62bd42d6874042bf01de4efd",
+    "source": "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2.tgz"
+  },
+  "scope": "R1 non-MVTec EfficientAD upstream assets only; no MVTec AD 2 archive or dataset body is included.",
+  "status": "READY",
+  "storage": "Raw and extracted asset paths are intentionally git-ignored under the authorized NTFS data root; this public-safe record contains no local path.",
+  "teacher_release_asset": {
+    "archive_members": [
+      "efficientad_pretrained_weights/",
+      "efficientad_pretrained_weights/pretrained_teacher_small.pth",
+      "efficientad_pretrained_weights/pretrained_teacher_medium.pth"
+    ],
+    "content_length": 39960466,
+    "license_status": "No separately verified license for the release weight asset. Internal noncommercial evaluation only; no redistribution or commercial-rights claim.",
+    "sha256": "c09aeaa2b33f244b3261a5efdaeae8f8284a949470a4c5a526c61275fe62684a",
+    "source": "https://github.com/open-edge-platform/anomalib/releases/download/efficientad_pretrained_weights/efficientad_pretrained_weights.zip",
+    "teacher_small": {
+      "bytes": 10779695,
+      "sha256": "a16ded54719674435576aee641152616a640dfc6dc2b83115dab6e226610ae7d"
+    }
+  }
+}
