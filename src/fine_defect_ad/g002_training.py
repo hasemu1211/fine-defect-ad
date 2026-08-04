@@ -150,9 +150,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 if __name__ == "__main__": raise SystemExit(main())
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
+    """Serialize Lightning's full connector checkpoint (loops/optimizers/RNG), not weights-only."""
     import io, torch
     output = io.BytesIO()
-    torch.save({"state_dict": trainer.lightning_module.state_dict(), "global_step": trainer.global_step}, output)
+    checkpoint = trainer._checkpoint_connector.dump_checkpoint(weights_only=False)
+    torch.save(checkpoint, output)
     return output.getvalue()
 
 
