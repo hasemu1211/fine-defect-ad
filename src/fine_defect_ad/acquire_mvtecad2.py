@@ -276,6 +276,25 @@ def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], d
     return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(manifest), "member_manifest_sha256": digest}
 
 
+def _file_sha256(stream) -> str:
+    digest = hashlib.sha256()
+    for block in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(block)
+    return digest.hexdigest()
+
+
+def _require_fresh_proof(proof, *, run_id: str, plan: dict):
+    try:
+        require_proof(proof, run_id=run_id)
+        return proof
+    except StorageBlocked as exc:
+        if "expired" not in str(exc):
+            raise
+    refreshed = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=0, reserve_evidence=plan["reserve_evidence"])
+    require_proof(refreshed, run_id=run_id)
+    return refreshed
+
+
 def extract(*, run_id: str, terms_ack: Path | None = None, destination: Path | None = None) -> dict:
     """Safely extract the verified archive under data root; never overwrites or cleans."""
     if terms_ack is None:
@@ -293,34 +312,43 @@ def extract(*, run_id: str, terms_ack: Path | None = None, destination: Path | N
         {"root":"data","bytes":sizing["max_member_bytes"],"kind":"transient","component_id":"mvtecad2-extraction-member","source":provenance},
     ], "reserve_bytes":0, "reserve_evidence":{"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":provenance}}
     proof = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=0, reserve_evidence=plan["reserve_evidence"])
+    resumed = verified_existing = 0
     try:
-        require_proof(proof, run_id=run_id)
+        proof = _require_fresh_proof(proof, run_id=run_id, plan=plan)
         target.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in members:
                 final = (target / member.name).resolve()
                 if not _under(final, target):
                     raise StorageBlocked("extraction destination escaped")
-                require_proof(proof, run_id=run_id)
+                proof = _require_fresh_proof(proof, run_id=run_id, plan=plan)
                 if member.isdir():
                     if final.exists() and (final.is_symlink() or not final.is_dir()):
                         raise StorageBlocked("extraction refuses unsafe existing directory")
                     final.mkdir(parents=True, exist_ok=True)
                     continue
-                if final.exists():
-                    raise StorageBlocked("extraction refuses existing destination")
-                final.parent.mkdir(parents=True, exist_ok=True)
                 partial = final.with_name("." + final.name + ".partial")
+                if partial.exists():
+                    raise StorageBlocked("extraction partial exists; refusing unsafe promotion")
+                if final.exists():
+                    if final.is_symlink() or not final.is_file() or final.stat().st_size != member.size:
+                        raise StorageBlocked("extraction existing file mismatch")
+                    with archive.extractfile(member) as source, final.open("rb") as existing:
+                        if _file_sha256(source) != _file_sha256(existing):
+                            raise StorageBlocked("extraction existing file hash mismatch")
+                    verified_existing += 1
+                    continue
+                final.parent.mkdir(parents=True, exist_ok=True)
                 with archive.extractfile(member) as source, partial.open("xb") as output:
                     for block in iter(lambda: source.read(1024 * 1024), b""):
                         output.write(block)
                     output.flush(); os.fsync(output.fileno())
-                os.replace(partial, final)
+                os.replace(partial, final); resumed += 1
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             return invalidate_run(proof, run_id=run_id, cause="ENOSPC", partial_path=target)
         raise
-    return {"status": READY, "run_id": run_id, "archive_sha256": ARCHIVE_SHA256, "exact_uncompressed_bytes": sizing["exact_uncompressed_bytes"], "max_member_bytes": sizing["max_member_bytes"], "member_count": sizing["member_count"], "extracted_file_count": sizing["member_count"], "extracted_bytes": sizing["exact_uncompressed_bytes"], "member_manifest_sha256": sizing["member_manifest_sha256"]}
+    return {"status": READY, "run_id": run_id, "archive_sha256": ARCHIVE_SHA256, "exact_uncompressed_bytes": sizing["exact_uncompressed_bytes"], "max_member_bytes": sizing["max_member_bytes"], "member_count": sizing["member_count"], "extracted_file_count": sizing["member_count"], "resumed_file_count": resumed, "verified_existing_file_count": verified_existing, "extracted_bytes": sizing["exact_uncompressed_bytes"], "member_manifest_sha256": sizing["member_manifest_sha256"]}
 
 
 if __name__ == "__main__":
