@@ -273,3 +273,17 @@ class TrainingArtifactTests(TestCase):
             with patch('fine_defect_ad.g002_training.training_identity',return_value={'x':1}), patch('fine_defect_ad.g002_training.validate_training_lease'):
                 record=run_training(args,admit_pilot_fn=lambda _:pilot,preflight_fn=lambda **k:proof,lease_factory=Lease,runtime_factory=runtime,artifacts_factory=Art,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'run','command':'g002-training'},{'state':'released','run_id':'run','command':'g002-training','outcome':'normal'}],torch_module=torch,callback_base=object)
             self.assertEqual(record['status'],'STOPPED_INCOMPLETE'); self.assertNotEqual(record['termination_cause'],'INTERRUPTED_RESUMABLE')
+
+    def test_trusted_resume_loader_accepts_path_checkpoint_when_overlay_available(self):
+        import os, subprocess, sys, textwrap
+        python=Path('/home/codelab/Desktop/Project/WNTAD/.venv/bin/python')
+        if not python.exists(): self.skipTest('overlay interpreter unavailable')
+        code='''from pathlib import Path
+import tempfile, torch
+from fine_defect_ad.g002_training import trusted_resume_checkpoint_io
+with tempfile.TemporaryDirectory() as d:
+ p=Path(d)/"x.ckpt"; torch.save({"path":Path("local")},p)
+ assert trusted_resume_checkpoint_io().load_checkpoint(p)["path"] == Path("local")
+'''
+        env={**os.environ,'PYTHONPATH':f'{Path.cwd()/"src"}:{Path.cwd()/".internal/venv/r1-overlay"}'}
+        subprocess.run([str(python),'-c',textwrap.dedent(code)],check=True,env=env,capture_output=True)
