@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.extract:
-            print(json.dumps(extract(run_id=args.run_id, destination=args.destination), sort_keys=True)); return 0
+            print(json.dumps(extract(run_id=args.run_id, terms_ack=args.terms_ack, destination=args.destination), sort_keys=True)); return 0
         if args.plan:
             plan = archive_plan(args.run_id)
             print(json.dumps(plan, sort_keys=True)); return 0
@@ -276,8 +276,11 @@ def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], d
     return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(manifest), "member_manifest_sha256": digest}
 
 
-def extract(*, run_id: str, destination: Path | None = None) -> dict:
+def extract(*, run_id: str, terms_ack: Path | None = None, destination: Path | None = None) -> dict:
     """Safely extract the verified archive under data root; never overwrites or cleans."""
+    if terms_ack is None:
+        raise StorageBlocked("terms acknowledgement is required before extraction")
+    load_terms_ack(terms_ack)
     roots = roots_from_env(); archive_path = (roots["data"] / ARCHIVE_NAME).resolve()
     target = (Path(destination) if destination else roots["data"] / "mvtec_ad_2").expanduser().resolve()
     if not _under(target, roots["data"]) or target == roots["data"].resolve():
