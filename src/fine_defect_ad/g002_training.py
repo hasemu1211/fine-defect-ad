@@ -128,6 +128,8 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             model, module, trainer, _ = runtime_factory(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
             safety = SafetyMetrics()
             trainer.callbacks.append(safety)
+            if args.resume_checkpoint:
+                trainer.strategy.checkpoint_io = trusted_resume_checkpoint_io()
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
             checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
             metrics_path = artifacts.metrics(safety.rows)
@@ -170,6 +172,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, required=True); parser.add_argument("--teacher-small", type=Path, required=True); parser.add_argument("--imagenette-root", type=Path, required=True); parser.add_argument("--lease-directory", type=Path, required=True)
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002, raw.resume_checkpoint)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
+
+def trusted_resume_checkpoint_io():
+    """Lightning IO for the already sidecar/hash-validated local resume checkpoint only."""
+    import torch
+    from lightning.fabric.plugins.io.torch_io import TorchCheckpointIO
+    class TrustedLocalCheckpointIO(TorchCheckpointIO):
+        def load_checkpoint(self, path, map_location=lambda storage, loc: storage, weights_only=None):
+            return torch.load(path, map_location=map_location, weights_only=False)
+    return TrustedLocalCheckpointIO()
+
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
     """Serialize Lightning's full connector checkpoint (loops/optimizers/RNG), not weights-only."""
