@@ -86,7 +86,10 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
     try:
         pilot = admit_pilot_fn(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
-        if args.resume_checkpoint: args = TrainingArgs(args.pilot_evidence, args.run_id, args.checkpoint_directory, args.metrics_path, args.g002, select_resume_slot(args.resume_checkpoint, identity))
+        if args.resume_checkpoint:
+            selected = select_resume_slot(args.resume_checkpoint, identity)
+            resume = validate_slot_resume(selected, identity)
+            args = TrainingArgs(args.pilot_evidence, args.run_id, args.checkpoint_directory, args.metrics_path, args.g002, selected)
         bootstrap = json.dumps({"run_id": args.run_id, "identity": identity, "lease_events_max": 2}, sort_keys=True).encode()
         source = f"exact canonical bootstrap bytes={len(bootstrap)} plus two bounded lease event records"
         proof = preflight_fn(run_id=args.run_id, allocations=[Allocation("artifact", len(bootstrap), "persistent", source, "g002-bootstrap"), Allocation("artifact", 16_384, "persistent", source, "g002-lease-events")], reserve_bytes=len(bootstrap), reserve_evidence={"max_pending_atomic_write_bytes":len(bootstrap),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
@@ -129,7 +132,7 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             safety = SafetyMetrics()
             trainer.callbacks.append(safety)
             if args.resume_checkpoint:
-                trainer.strategy.checkpoint_io = trusted_resume_checkpoint_io()
+                trainer.strategy.checkpoint_io = trusted_resume_checkpoint_io(args.resume_checkpoint, resume["checkpoint_sha256"], Path(proof.roots["artifact"]))
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
             checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
             metrics_path = artifacts.metrics(safety.rows)
@@ -173,15 +176,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002, raw.resume_checkpoint)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
 
-def trusted_resume_checkpoint_io():
-    """Lightning IO for the already sidecar/hash-validated local resume checkpoint only."""
+def trusted_resume_checkpoint_io(checkpoint: Path, expected_sha256: str, artifact_root: Path):
+    """Unsafe pickle is narrowly allowed only for one selected, artifact-root local checkpoint."""
     import torch
     from lightning.fabric.plugins.io.torch_io import TorchCheckpointIO
+    selected, root = Path(checkpoint).resolve(), Path(artifact_root).resolve()
+    try: selected.relative_to(root)
+    except ValueError as exc: raise TrainingBlocked("resume checkpoint escapes admitted artifact root") from exc
     class TrustedLocalCheckpointIO(TorchCheckpointIO):
         def load_checkpoint(self, path, map_location=lambda storage, loc: storage, weights_only=None):
-            return torch.load(path, map_location=map_location, weights_only=False)
+            candidate = Path(path).resolve()
+            if candidate != selected or file_sha256(candidate) != expected_sha256:
+                raise TrainingBlocked("trusted resume checkpoint changed or path mismatched")
+            return torch.load(candidate, map_location=map_location, weights_only=False)
     return TrustedLocalCheckpointIO()
-
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
     """Serialize Lightning's full connector checkpoint (loops/optimizers/RNG), not weights-only."""
