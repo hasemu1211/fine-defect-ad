@@ -70,17 +70,15 @@ def checkpoint_interval_steps(pilot: Mapping[str, Any]) -> int:
     return max(1, int(RPO_SECONDS / median))
 
 
-def resume_sidecar(checkpoint: Path, pilot_hash: str) -> dict[str, str]:
+def resume_sidecar(checkpoint: Path, pilot_hash: str, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
     return {"checkpoint_sha256": file_sha256(checkpoint), "pilot_sha256": pilot_hash,
-            "decision_id": DECISION_ID, "resume_exactness": "NOT_ESTABLISHED"}
+            "identity": dict(identity or {}), "decision_id": DECISION_ID, "resume_exactness": "NOT_ESTABLISHED"}
 
-
-def validate_resume(checkpoint: Path, sidecar: Path) -> dict[str, str]:
+def validate_resume(checkpoint: Path, sidecar: Path, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
     value = json.loads(Path(sidecar).read_text())
-    if value != resume_sidecar(checkpoint, PILOT_SHA256):
+    if value != resume_sidecar(checkpoint, PILOT_SHA256, identity):
         raise TrainingBlocked("checkpoint sidecar identity gate failed")
     return value
-
 
 def public_attempt(run_id: str, pilot: Mapping[str, Any], *, cause: str | None = None) -> dict[str, Any]:
     return {"run_id": run_id, "status": READY if cause is None else STOPPED_INCOMPLETE,
