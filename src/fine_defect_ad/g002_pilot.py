@@ -6,10 +6,10 @@ Imports of torch, Lightning, torchvision and anomalib deliberately live inside
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from hashlib import sha256
 import json
-import math
+import re
 from pathlib import Path
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -23,6 +23,8 @@ from .storage import Allocation, PreflightProof, StorageBlocked, atomic_write, p
 
 TEACHER_SMALL_SHA256 = "a16ded54719674435576aee641152616a640dfc6dc2b83115dab6e226610ae7d"
 TEACHER_SMALL_BYTES = 10_779_695
+LEASE_WRITE_BYTES = 16_384  # lock, holder, acquired/released event upper bound
+RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 CATEGORY = "sheet_metal"
 
 
@@ -73,6 +75,11 @@ def verify_local_assets(args: G002Args) -> dict[str, Any]:
             "category": CATEGORY, "file_identity": train_val_file_identity(category_root)}
 
 
+def scoped_normal_images(directory: Path) -> list[Path]:
+    """Enumerate only the caller-selected normal leaf; never recurse from category root."""
+    return [path for path in sorted(Path(directory).glob("*.png")) if path.is_file()]
+
+
 def train_val_file_identity(category_root: Path) -> dict[str, list[dict[str, str]]]:
     """Hash only G002's train/validation files; test paths are intentionally unreachable."""
     result: dict[str, list[dict[str, str]]] = {}
@@ -85,9 +92,14 @@ def train_val_file_identity(category_root: Path) -> dict[str, list[dict[str, str
 
 def _payload_plan(run_id: str, payload: bytes, *, phase: str) -> tuple[list[Allocation], int, dict[str, Any]]:
     source = f"G002 {phase} payload sha256={sha256(payload).hexdigest()} bytes={len(payload)}"
-    return ([Allocation("artifact", len(payload), "persistent", source, "g002-pilot-evidence")], len(payload),
-            {"max_pending_atomic_write_bytes": len(payload), "measured_high_water_bytes": 0,
-             "runtime_or_source_citation": source})
+    allocations = [
+        Allocation("artifact", len(payload), "persistent", source, "g002-pilot-evidence"),
+        Allocation("artifact", LEASE_WRITE_BYTES, "persistent",
+                   "G002 GpuLease: lock, holder, acquired/released events <= 16384 bytes", "g002-gpu-lease"),
+    ]
+    required = len(payload) + LEASE_WRITE_BYTES
+    return allocations, required, {"max_pending_atomic_write_bytes": required, "measured_high_water_bytes": 0,
+                                   "runtime_or_source_citation": source}
 
 
 def _preflight(run_id: str, payload: bytes, phase: str,
@@ -96,14 +108,64 @@ def _preflight(run_id: str, payload: bytes, phase: str,
     return admission(run_id=run_id, allocations=allocations, reserve_bytes=reserve, reserve_evidence=reserve_evidence)
 
 
-def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tuple[Any, Any, Any]:
+def _under(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_run_id(run_id: str) -> None:
+    if not isinstance(run_id, str) or not RUN_ID_RE.fullmatch(run_id):
+        raise ValueError("run_id must be 1-80 safe filename characters")
+
+
+def _public_assets(assets: Mapping[str, Any]) -> dict[str, Any]:
+    teacher = assets.get("teacher_small", {})
+    return {"teacher_small": {"sha256": teacher.get("sha256"), "bytes": teacher.get("bytes")},
+            "category": CATEGORY, "imagenette": "verified-local-imagefolder",
+            "train_val_file_identity": assets.get("file_identity", {})}
+
+
+def _public_proof(proof: PreflightProof) -> dict[str, Any]:
+    devices = proof.filesystems.get("devices", {})
+    return {"fingerprint": proof.fingerprint, "status": proof.status,
+            "device_capacity": [{"required_bytes": pool.get("required_bytes"),
+                                 "available_bytes": pool.get("available_bytes")}
+                                for _, pool in sorted(devices.items())]}
+
+
+def validate_lease_events(events: list[dict[str, Any]], run_id: str, command: str) -> list[dict[str, str]]:
+    """Require exactly one complete, fresh lease lifecycle before READY."""
+    if len(events) != 2 or [event.get("state") for event in events] != ["acquired", "released"]:
+        raise ValueError("lease events must be exactly acquired then released")
+    acquired, released = events
+    if any(event.get("run_id") != run_id or event.get("command") != command for event in events):
+        raise ValueError("lease event identity mismatch")
+    if acquired.get("timestamp") > released.get("timestamp") or released.get("outcome") != "normal":
+        raise ValueError("lease event order/outcome invalid")
+    return [{"state": "acquired", "timestamp": str(acquired["timestamp"])},
+            {"state": "released", "timestamp": str(released["timestamp"]), "outcome": "normal"}]
+
+def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tuple[Any, Any, Any, Any]:
     """Construct no-download runtime classes only after assets and lease admission."""
     import torch
     from lightning.pytorch import Callback, Trainer, seed_everything
-    from anomalib.data.datasets.image.mvtecad2 import MVTecAD2Dataset
+    from anomalib.data.datasets.base.image import AnomalibDataset
     from anomalib.data.datamodules.base.image import AnomalibDataModule
-    from anomalib.data.utils import Split
+    from pandas import DataFrame
     from anomalib.models import EfficientAd
+
+    class ScopedNormalDataset(AnomalibDataset):
+        """Only enumerates one explicit normal directory; no category-root scan."""
+        def __init__(self, directory: Path, split: str, augmentations: Any = None) -> None:
+            super().__init__(augmentations=augmentations)
+            files = scoped_normal_images(directory)
+            rows = [(str(directory.parent.parent), split, "good", str(path), None, 0) for path in files]
+            samples = DataFrame(rows, columns=["path", "split", "label", "image_path", "mask_path", "label_index"])
+            samples.attrs["task"] = "segmentation"
+            self.samples, self.category = samples, CATEGORY
 
     class TrainValMVTecAD2(AnomalibDataModule):
         def __init__(self) -> None:
@@ -111,7 +173,6 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
             self.root, self.category = args.dataset_root.resolve(), CATEGORY
 
         def prepare_data(self) -> None:
-            # Never call the downloading MVTecAD2 implementation.
             if not (self.root / self.category).is_dir():
                 raise FileNotFoundError("local sheet_metal category is missing")
 
@@ -119,11 +180,10 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
             raise RuntimeError("G002 setup must not call base setup")
 
         def setup(self, stage: str | None = None) -> None:
-            # Deliberately no super().setup(): it may create test datasets/splits.
-            self.train_data = MVTecAD2Dataset(root=self.root, category=CATEGORY, split=Split.TRAIN,
-                                              augmentations=self.train_augmentations)
-            self.val_data = MVTecAD2Dataset(root=self.root, category=CATEGORY, split=Split.VAL,
-                                            augmentations=self.val_augmentations)
+            # No super().setup(), category-root glob, split helper, or test dataset.
+            category = self.root / CATEGORY
+            self.train_data = ScopedNormalDataset(category / "train" / "good", "train", self.train_augmentations)
+            self.val_data = ScopedNormalDataset(category / "validation" / "good", "val", self.val_augmentations)
             if len(self.train_data) != 137 or len(self.val_data) != 19:
                 raise ValueError("G002 requires exactly 137 train and 19 validation images")
 
@@ -176,7 +236,10 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
                       max_steps=70_000, max_epochs=1_000, logger=False, enable_checkpointing=False,
                       enable_progress_bar=False, enable_model_summary=False, num_sanity_val_steps=0,
                       limit_val_batches=0, callbacks=[callback])
-    return model, datamodule, trainer
+    validator = Trainer(accelerator="gpu", devices=1, precision="32-true", deterministic=True,
+                        logger=False, enable_checkpointing=False, enable_progress_bar=False,
+                        enable_model_summary=False, num_sanity_val_steps=0, limit_val_batches=1.0)
+    return model, datamodule, trainer, validator
 
 
 def run_g002_pilot(args: G002Args, *, admission: Callable[..., PreflightProof] = preflight,
@@ -189,8 +252,11 @@ def run_g002_pilot(args: G002Args, *, admission: Callable[..., PreflightProof] =
     command = "g002-pilot"
     try:
         # A source-derived, fresh storage proof is required before the GPU window.
+        _safe_run_id(args.run_id)
         initial = {"run_id": args.run_id, "command": command, "protocol": "G002 local-only pilot"}
         pre_gpu_proof = _preflight(args.run_id, json.dumps(initial, sort_keys=True).encode(), "pre-gpu", admission)
+        if not _under(args.lease_directory, Path(pre_gpu_proof.roots["artifact"])):
+            raise StorageBlocked("lease_directory must be an artifact-root descendant")
     except BusyError:
         raise
     except Exception as exc:
@@ -202,17 +268,16 @@ def run_g002_pilot(args: G002Args, *, admission: Callable[..., PreflightProof] =
     assets: dict[str, Any] = {}
     try:
         with GpuLease(args.lease_directory, args.run_id, command):
-            # Asset verification is part of the same exclusive GPU-heavy window as setup/fit/validation.
-            assets = verify_local_assets(args)
+            # Required end-to-first-batch setup timer starts at lease acquisition, before hashing/imports.
             started = time.monotonic()
-            model, datamodule, trainer = _lazy_runtime(args, evidence, started)
+            assets = verify_local_assets(args)
+            model, datamodule, trainer, validator = _lazy_runtime(args, evidence, started)
             trainer.fit(model, datamodule=datamodule)
             if len(evidence.step_timestamps) != PILOT_STEPS:
                 cause = f"PILOT_STEPS_{len(evidence.step_timestamps)}_OF_{PILOT_STEPS}"
             elif evidence.gradient_finite is not False:
                 validated = time.monotonic()
-                trainer.limit_val_batches = 1.0  # fit validation stays disabled; this is the sole explicit validation.
-                trainer.validate(model, datamodule=datamodule)
+                validator.validate(model, datamodule=datamodule)
                 evidence.record_validation(time.monotonic() - validated)
     except BusyError:
         raise
@@ -220,18 +285,22 @@ def run_g002_pilot(args: G002Args, *, admission: Callable[..., PreflightProof] =
         cause = str(exc)
     except Exception as exc:
         cause = f"RUNNER_EXCEPTION:{type(exc).__name__}"
-    evidence.record_lease_events(lease_events(args.lease_directory, args.run_id))
+    try:
+        evidence.record_lease_events(validate_lease_events(lease_events(args.lease_directory, args.run_id), args.run_id, command))
+    except Exception as exc:
+        cause = cause or f"LEASE_EVIDENCE:{type(exc).__name__}"
     record = evidence.to_record(cause)
-    record.update({"g002": {"category": CATEGORY, "seed": R1_SEED, "assets": assets,
-                              "pre_gpu_storage_proof": asdict(pre_gpu_proof),
-                              "train_val_file_identity": assets.get("file_identity", {})}})
+    record.update({"g002": {"category": CATEGORY, "seed": R1_SEED, "assets": _public_assets(assets),
+                              "pre_gpu_storage_proof": _public_proof(pre_gpu_proof)}})
     payload, payload_hash = immutable_json(record)
     destination = Path(pre_gpu_proof.roots["artifact"]) / f"g002-pilot-{payload_hash}.json"
     try:
         # Payload may differ from the preliminary proof; admit the exact bytes immediately before write.
         exact_proof = _preflight(args.run_id, payload, "exact-evidence", admission)
-        result = writer(destination, payload, proof=exact_proof, run_id=args.run_id, overwrite=False)
-        record["artifact"] = {"sha256": payload_hash, **dict(result)}
+        result = dict(writer(destination, payload, proof=exact_proof, run_id=args.run_id, overwrite=False))
+        if result.get("status") != "READY":
+            raise StorageBlocked("immutable evidence write was not READY")
+        record["artifact"] = {"sha256": payload_hash, "status": "READY", "run_id": args.run_id}
     except Exception as exc:
         record["status"] = STOPPED_INCOMPLETE
         record["termination_cause"] = f"EVIDENCE_WRITE:{type(exc).__name__}"
