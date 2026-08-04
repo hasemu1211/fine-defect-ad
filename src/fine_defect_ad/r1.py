@@ -90,9 +90,10 @@ def _valid_seed_provenance(provenance: Mapping[str, Any]) -> bool:
 
 
 def protocol_provenance_status(provenance: Mapping[str, Any]) -> dict[str, str]:
-    """Expose a blocking state instead of inventing an unverified protocol value."""
-    required = {"status", "source_locator", "source_sha256"}
-    if not required <= set(provenance) or provenance.get("status") != "VERIFIED":
+    """Expose a blocking state instead of inventing an unverified comparator."""
+    required = {"source_locator", "source_sha256"}
+    status = provenance.get("comparator_status", provenance.get("status"))
+    if not required <= set(provenance) or status != "VERIFIED":
         return {"claim_state": PROTOCOL_BLOCKED_STATE}
     digest = provenance["source_sha256"]
     if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
@@ -100,9 +101,13 @@ def protocol_provenance_status(provenance: Mapping[str, Any]) -> dict[str, str]:
     return {"claim_state": "VERIFIED"}
 
 
-def _comparator(provenance: Mapping[str, Any]) -> str:
+def _formula_is_verified(provenance: Mapping[str, Any]) -> bool:
+    return provenance.get("formula_status") == "VERIFIED" and bool(provenance.get("formula_source_locator"))
+
+
+def _comparator(provenance: Mapping[str, Any]) -> str | None:
     if protocol_provenance_status(provenance)["claim_state"] != "VERIFIED":
-        raise ValueError("threshold comparator is blocked pending verified provenance")
+        return None
     comparator = provenance.get("comparator")
     if comparator not in {">", ">="}:
         raise ValueError("verified provenance comparator must be '>' or '>='")
@@ -112,15 +117,19 @@ def _comparator(provenance: Mapping[str, Any]) -> str:
 @dataclass(frozen=True)
 class RawThreshold:
     value: float
-    comparator: str
+    comparator: str | None
     provenance: Mapping[str, Any]
 
     def is_positive(self, score: float) -> bool:
+        if self.comparator is None:
+            raise ValueError("pixel/image decisions are blocked pending verified comparator provenance")
         return score > self.value if self.comparator == ">" else score >= self.value
 
 
 def calibrate_raw_threshold(validation_maps: Iterable[Any], provenance: Mapping[str, Any]) -> RawThreshold:
     """Calculate one raw pixel threshold (mean + 3 population standard deviations)."""
+    if not _formula_is_verified(provenance):
+        raise ValueError("raw threshold formula requires verified provenance")
     comparator = _comparator(provenance)
     scores = [score for raw_map in validation_maps for score in _values(raw_map)]
     if not scores:

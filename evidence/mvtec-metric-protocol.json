@@ -1,0 +1,12 @@
+{
+  "formula_status": "VERIFIED",
+  "formula_source_locator": "MVTec AD 2 paper, section 4.2.2",
+  "formula": "raw per-pixel validation mean plus 3 population standard deviations",
+  "metric": "AU-PRO0.05",
+  "comparator_status": "UNVERIFIED_PUBLICLY",
+  "comparator": null,
+  "comparator_limitation": "No public official source specifies > versus >= at equality.",
+  "code_utils_status": "checker_not_evaluator",
+  "official_benchmark_claim": "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE",
+  "contact_needed": "Obtain an official evaluator or written comparator confirmation before binarization/audit/benchmark claims."
+}

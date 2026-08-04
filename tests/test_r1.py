@@ -12,8 +12,11 @@ from fine_defect_ad.r1 import (
 )
 
 
-PROVENANCE = {"status": "VERIFIED", "source_locator": "https://example.invalid/protocol",
+PROVENANCE = {"formula_status": "VERIFIED", "formula_source_locator": "MVTec AD 2 paper §4.2.2",
+              "comparator_status": "VERIFIED", "source_locator": "https://example.invalid/protocol",
               "source_sha256": "0" * 64}
+BLOCKED_COMPARATOR = {"formula_status": "VERIFIED", "formula_source_locator": "MVTec AD 2 paper §4.2.2",
+                      "comparator_status": "UNVERIFIED_PUBLICLY", "comparator": None}
 SEED_PROVENANCE = {"status": "VERIFIED", "upstream_seed_status": "ABSENT",
                    "identity": R1_SEED_IDENTITY, "identity_sha256": R1_SEED_IDENTITY_SHA256,
                    "derivation": R1_SEED_DERIVATION, "seed": R1_SEED}
@@ -33,9 +36,14 @@ class R1Tests(unittest.TestCase):
             bad = self.config(); bad[key] = value
             with self.assertRaises(ValueError): validate_efficientad_s_config(bad)
 
-    def test_raw_threshold_requires_verified_comparator_and_preserves_shape(self):
-        self.assertEqual(protocol_provenance_status({})["claim_state"], PROTOCOL_BLOCKED_STATE)
-        with self.assertRaisesRegex(ValueError, "blocked"): calibrate_raw_threshold([[1]], {"comparator": ">"})
+    def test_numeric_threshold_survives_blocked_comparator_but_decisions_fail_closed(self):
+        evidence = json.loads(Path("evidence/mvtec-metric-protocol.json").read_text())
+        self.assertEqual(evidence["official_benchmark_claim"], PROTOCOL_BLOCKED_STATE)
+        self.assertEqual(protocol_provenance_status(BLOCKED_COMPARATOR)["claim_state"], PROTOCOL_BLOCKED_STATE)
+        blocked = calibrate_raw_threshold([[1, 2], [3, 4]], BLOCKED_COMPARATOR)
+        self.assertAlmostEqual(blocked.value, 2.5 + 3 * math.sqrt(1.25))
+        with self.assertRaisesRegex(ValueError, "blocked"): threshold_raw_map([[1]], blocked)
+        with self.assertRaisesRegex(ValueError, "blocked"): audit_testpub_normal([[[1]]], blocked, confidence=.95, minimum_normal_samples=1)
         threshold = calibrate_raw_threshold([[1, 2], [3, 4]], {**PROVENANCE, "comparator": ">"})
         self.assertAlmostEqual(threshold.value, 2.5 + 3 * math.sqrt(1.25))
         raw = [[1, 7]]; preserved, pixels, image_positive, score = threshold_raw_map(raw, threshold)
