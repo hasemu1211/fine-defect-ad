@@ -35,3 +35,18 @@ class G002TrainingTests(TestCase):
             with lease:
                 lease._signal(15, None)
                 self.assertEqual(lease.pending_signal, 15)
+
+class TrainingArtifactTests(TestCase):
+    def test_exact_bytes_sidecar_metrics_and_immutable_writer(self):
+        from datetime import datetime, timezone
+        from fine_defect_ad.g002_training import TrainingArtifacts
+        from fine_defect_ad.storage import PreflightProof
+        with TemporaryDirectory() as raw:
+            root=Path(raw); writes=[]
+            def admit(**kwargs): return PreflightProof('run',{'artifact':str(root)},'f',datetime.now(timezone.utc).isoformat(),{},[],{'reserve_bytes':0})
+            def writer(path,payload,**kwargs):
+                Path(path).write_bytes(payload); writes.append(bytes(payload)); return {'status':'READY'}
+            a=TrainingArtifacts(root,'run',{'identity':'x'},admit,writer)
+            cp, side=a.checkpoint(2,lambda:b'checkpoint')
+            self.assertTrue(cp.is_file() and side.is_file()); self.assertTrue(a.metrics([{'loss':1}]).is_file())
+            self.assertEqual(len(writes),3)

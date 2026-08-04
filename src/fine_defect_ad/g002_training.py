@@ -156,3 +156,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
 if __name__ == "__main__": raise SystemExit(main())
+
+@dataclass
+class TrainingArtifacts:
+    """Single proof-bound writer for G002 checkpoint, sidecar, metrics and attempt evidence."""
+    artifact_root: Path
+    run_id: str
+    identity: Mapping[str, Any]
+    admit: Any = preflight
+    write: Any = atomic_write
+
+    def __post_init__(self) -> None:
+        self.artifact_root = Path(self.artifact_root).resolve()
+        self.identity_hash = sha256(json.dumps(dict(self.identity), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def _commit(self, name: str, payload: bytes) -> Path:
+        path = require_artifact_child(self.artifact_root / name, self.artifact_root)
+        source = f"exact in-memory {name} bytes={len(payload)} sha256={sha256(payload).hexdigest()}"
+        proof = self.admit(run_id=self.run_id, allocations=[Allocation("artifact", len(payload), "persistent", source, "g002-training-artifact"), Allocation("artifact", len(payload), "transient", source, "g002-training-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":len(payload),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        if Path(proof.roots["artifact"]).resolve() != self.artifact_root:
+            raise TrainingBlocked("fresh proof artifact root changed")
+        result = self.write(path, payload, proof=proof, run_id=self.run_id, overwrite=False)
+        if result.get("status") != READY or not path.is_file() or file_sha256(path) != sha256(payload).hexdigest():
+            raise TrainingBlocked("artifact commit verification failed")
+        return path
+
+    def checkpoint(self, step: int, serialize_checkpoint: Any) -> tuple[Path, Path]:
+        if not 0 <= step <= MAX_STEPS: raise TrainingBlocked("checkpoint step invalid")
+        payload = serialize_checkpoint()
+        if not isinstance(payload, bytes) or not payload: raise TrainingBlocked("checkpoint serializer returned no bytes")
+        checkpoint = self._commit(f"g002-last-{self.run_id}.ckpt", payload)
+        sidecar = {"checkpoint_sha256": sha256(payload).hexdigest(), "identity_sha256": self.identity_hash,
+                   "pilot_sha256": PILOT_SHA256, "global_step": step, "lineage": self.run_id,
+                   "resume_exactness": "NOT_ESTABLISHED"}
+        return checkpoint, self._commit(f"g002-last-{self.run_id}.ckpt.json", json.dumps(sidecar,sort_keys=True).encode())
+
+    def metrics(self, rows: Sequence[Mapping[str, Any]]) -> Path:
+        if len(rows) > 511: raise TrainingBlocked("metrics snapshot exceeds 511 epoch rows")
+        return self._commit(f"g002-metrics-{self.run_id}.json", json.dumps(list(rows),sort_keys=True,allow_nan=False).encode())
+
+    def final(self, record: Mapping[str, Any]) -> Path:
+        return self._commit(f"g002-attempt-{self.run_id}-{sha256(json.dumps(dict(record),sort_keys=True).encode()).hexdigest()}.json", json.dumps(dict(record),sort_keys=True,allow_nan=False).encode())
