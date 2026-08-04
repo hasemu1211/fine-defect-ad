@@ -148,7 +148,8 @@ def validate_lease_events(events: list[dict[str, Any]], run_id: str, command: st
     return [{"state": "acquired", "timestamp": str(acquired["timestamp"])},
             {"state": "released", "timestamp": str(released["timestamp"]), "outcome": "normal"}]
 
-def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tuple[Any, Any, Any, Any]:
+def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float,
+                  *, pilot_steps: int | None = PILOT_STEPS) -> tuple[Any, Any, Any, Any]:
     """Construct no-download runtime classes only after assets and lease admission."""
     import torch
     from lightning.pytorch import Callback, Trainer, seed_everything
@@ -225,9 +226,9 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
             evidence.record_step(timestamp=time.monotonic(), gradients_finite=True, host_rss_bytes=host_rss_bytes(),
                                  gpu_allocated_bytes=torch.cuda.max_memory_allocated(),
                                  gpu_reserved_bytes=torch.cuda.max_memory_reserved())
-            if step == PILOT_STEPS:
+            if pilot_steps is not None and step == pilot_steps:
                 trainer.should_stop = True
-            elif step > PILOT_STEPS:
+            elif pilot_steps is not None and step > pilot_steps:
                 raise PilotStopped("PILOT_OVERSHOT")
 
     seed_everything(R1_SEED, workers=True)
@@ -238,7 +239,7 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
     trainer = Trainer(accelerator="gpu", devices=1, precision="32-true", deterministic=True,
                       max_steps=70_000, max_epochs=1_000, logger=False, enable_checkpointing=False,
                       enable_progress_bar=False, enable_model_summary=False, num_sanity_val_steps=0,
-                      limit_val_batches=0, callbacks=[callback])
+                      limit_val_batches=0, callbacks=[callback] if pilot_steps is not None else [])
     validator = Trainer(accelerator="gpu", devices=1, precision="32-true", deterministic=True,
                         logger=False, enable_checkpointing=False, enable_progress_bar=False,
                         enable_model_summary=False, num_sanity_val_steps=0, limit_val_batches=1.0)
