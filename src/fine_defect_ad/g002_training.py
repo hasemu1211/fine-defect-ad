@@ -34,12 +34,14 @@ def file_sha256(path: Path) -> str:
 
 def training_identity(args: G002Args) -> dict[str, Any]:
     assets = verify_local_assets(args)
-    lock = Path(__file__).resolve().parents[2] / "requirements/r1-overlay.txt"
+    root = Path(__file__).resolve().parents[2]
+    lock = root / "requirements/r1-overlay.txt"
+    provenance = root / "evidence/r1-upstream-assets-provenance.json"
     git = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
     return {"teacher_sha256": assets["teacher_small"]["sha256"], "imagenette": "verified-local-imagefolder",
             "data": assets["file_identity"], "protocol": expected_pilot_protocol_metadata(),
-            "overlay_lock_sha256": file_sha256(lock), "git": git, "git_dirty": dirty,
+            "overlay_lock_sha256": file_sha256(lock), "upstream_assets_provenance_sha256": file_sha256(provenance), "git": git, "git_dirty": dirty,
             "schedule": {"max_steps": MAX_STEPS, "max_epochs": 1000}}
 
 def require_artifact_child(path: Path, artifact: Path) -> Path:
@@ -209,7 +211,10 @@ def validate_slot_resume(checkpoint: Path, identity: Mapping[str, Any]) -> dict[
     if (not required <= value.keys() or value["checkpoint_name"] != checkpoint.name
             or value["checkpoint_sha256"] != file_sha256(checkpoint)
             or value["identity_sha256"] != sha256(json.dumps(dict(identity),sort_keys=True,separators=(",",":")).encode()).hexdigest()
-            or value["pilot_sha256"] != PILOT_SHA256 or not 0 <= value["global_step"] < MAX_STEPS):
+            or value["pilot_sha256"] != PILOT_SHA256 or value.get("resume_exactness") != "NOT_ESTABLISHED"
+            or not isinstance(value.get("lineage"), str)
+            or (checkpoint.name.startswith("g002-last-") and checkpoint.stem.rsplit("-", 1)[0] != f"g002-last-{value['lineage']}")
+            or not 0 <= value["global_step"] < MAX_STEPS):
         raise TrainingBlocked("slot checkpoint resume identity gate failed")
     return value
 
