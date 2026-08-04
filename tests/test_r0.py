@@ -15,13 +15,17 @@ class R0Tests(unittest.TestCase):
   out=[]
   for split,counts in SPLIT_COUNTS.items():
    for status,n in counts.items():
-    for i in range(n): out.append(Sample(f'{split}-{status}-{i}',f'pair-{i}' if split in {'TESTpriv','TESTpriv,mix'} else f'{split}-{i}',split,status,'regular','id',f'{split}/{status}/{i}',f'h-{split}-{status}-{i}'))
+    for i in range(n): out.append(Sample(f'{split}-{status}-{i}',f'pair-{i}' if split in {'TESTpriv','TESTpriv,mix'} else f'{split}-{i}',split,status,'regular','id',f'{split}/{status}/{i}',f'{len(out):064x}'))
   return out
  def test_manifest_roles_hash_path_and_leakage(self):
   xs=self.samples(); validate_manifest(xs); self.assertEqual(canonical_manifest_hash(xs),canonical_manifest_hash(xs[::-1]))
   self.assertEqual(PUBLISHED_PRIVATE_AGGREGATE_COUNTS, {split:{'normal':36,'anomalous':106} for split in ('TESTpriv','TESTpriv,mix')})
   i=next(i for i,x in enumerate(xs) if x.split=='TESTpub'); xs[i]=replace(xs[i],sample_id=xs[0].sample_id)
   with self.assertRaisesRegex(ValueError,'leakage'): validate_manifest(xs)
+  xs=self.samples(); public=next(i for i,x in enumerate(xs) if x.split=='TESTpub'); xs[public]=replace(xs[public],scene_pair_id=xs[0].scene_pair_id)
+  with self.assertRaisesRegex(ValueError,'scene pair crosses split roles'): validate_manifest(xs)
+  xs=self.samples(); xs[0]=replace(xs[0],content_hash='not-a-sha256')
+  with self.assertRaisesRegex(ValueError,'canonical SHA-256'): validate_manifest(xs)
  def test_private_manifest_labels_are_unknown_only(self):
   xs=self.samples()
   private=next(i for i,x in enumerate(xs) if x.split=='TESTpriv'); xs[private]=replace(xs[private],anomaly_status='normal')
@@ -29,6 +33,7 @@ class R0Tests(unittest.TestCase):
   xs=self.samples(); public=next(i for i,x in enumerate(xs) if x.split=='TESTpub'); xs[public]=replace(xs[public],anomaly_status='unknown')
   with self.assertRaisesRegex(ValueError,'invalid manifest role'): validate_manifest(xs)
  def test_der_actual_register_and_schema_contract(self):
+  dataset_schema=json.loads(Path('evidence/schemas/dataset-manifest.schema.json').read_text()); self.assertEqual(dataset_schema['properties']['content_hash']['pattern'],'^[0-9a-f]{64}$')
   item={k:'x' for k in DER_REQUIRED};item.update(decision_id='DEC-R0-1',status='proposed',drivers=[],alternatives=[]);validate_der(item)
   rows=validate_decision_register(Path('evidence/decision-register.yaml')); self.assertEqual(len(rows),2)
   schema=json.loads(Path('evidence/schemas/decision-evidence-register.schema.json').read_text()); self.assertEqual(schema['type'],'array'); self.assertEqual(schema['items']['type'],'object')

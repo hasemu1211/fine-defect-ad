@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+from re import fullmatch
 
 
 PRIVATE_SPLITS = frozenset({"TESTpriv", "TESTpriv,mix"})
@@ -49,11 +50,15 @@ def validate_manifest(samples: list[Sample]) -> None:
             raise ValueError(f"invalid manifest role: {sample!r}")
         if not all(getattr(sample, name) for name in required) or not sample.content_hash or not sample.path:
             raise ValueError(f"missing required manifest field: {sample!r}")
+        if not fullmatch(r"[0-9a-f]{64}", sample.content_hash):
+            raise ValueError(f"content_hash must be canonical SHA-256: {sample!r}")
     by_id: dict[str, set[str]] = {}
+    by_pair: dict[str, set[str]] = {}
     by_path: dict[str, set[str]] = {}
     by_content: dict[str, set[str]] = {}
     for sample in samples:
         by_id.setdefault(sample.sample_id, set()).add(sample.split)
+        by_pair.setdefault(sample.scene_pair_id, set()).add(sample.split)
         if sample.path:
             by_path.setdefault(sample.path, set()).add(sample.split)
         if sample.content_hash:
@@ -64,6 +69,9 @@ def validate_manifest(samples: list[Sample]) -> None:
         for value, splits in mapping.items():
             if splits & barriers[0] and splits & barriers[1]:
                 raise ValueError(f"leakage across test barrier ({label}={value})")
+    for value, splits in by_pair.items():
+        if len(splits) > 1 and splits != PRIVATE_SPLITS:
+            raise ValueError(f"scene pair crosses split roles ({value}={splits})")
     train_validation = [s for s in samples if s.split in {"train", "validation"}]
     if len({s.sample_id for s in train_validation}) != len(train_validation):
         raise ValueError("train/validation sample IDs overlap")
