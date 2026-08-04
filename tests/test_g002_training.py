@@ -80,3 +80,9 @@ class TrainingArtifactTests(TestCase):
             self.assertTrue(select_resume_slot(bad,identity).name.endswith('-0.ckpt'))
             (root/'g002-last-run-0.ckpt.json').unlink()
             with self.assertRaises(TrainingBlocked): select_resume_slot(bad,identity)
+
+    def test_cli_help_imports_all_runtime_symbols(self):
+        import os, subprocess, sys
+        result = subprocess.run([sys.executable, '-m', 'fine_defect_ad.g002_training', '--help'], env={**os.environ, 'PYTHONPATH':'src'}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('--pilot-evidence', result.stdout)
