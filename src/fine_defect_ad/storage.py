@@ -133,7 +133,9 @@ def require_proof(proof: PreflightProof, *, run_id: str, roots: dict[str, Path] 
     # Repeat every authorization, fs, rw and write-probe check immediately before writes.
     for name, path in active.items(): _root_evidence(name, path, Path(authorized_raw).expanduser().resolve(), probe=True)
     current_docker = _docker_storage(active)
-    if proof.filesystems.get('docker_discovery') != current_docker: raise StorageBlocked('docker storage changed since preflight')
+    docker_fields = ('root', 'driver', 'driver_type', 'backing_fs', 'image_store_path')
+    if any(proof.filesystems.get('docker_discovery', {}).get(key) != current_docker.get(key) for key in docker_fields):
+        raise StorageBlocked('docker storage changed since preflight')
     devices = proof.filesystems.get('devices')
     if not isinstance(devices, dict): raise StorageBlocked('missing device capacity proof')
     for device, pool in devices.items():

@@ -1,10 +1,37 @@
 {
   "schema_version": 1,
-  "status": "PENDING_EXTERNAL_CONTAINER_CDI_AND_APPROVED_IMAGE",
+  "status": "PENDING_TRITON_NGC_EULA_ACCEPTANCE_AND_PINNED_PULL",
   "evidence": {
-    "python": {"command": ["python3", "--version"], "version": "3.12.3", "captured_at": "2026-08-03"},
-    "host_gpu": {"command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"], "status": "PENDING_COMMAND_EVIDENCE"},
-    "container_gpu": {"command": ["docker", "run", "--rm", "--gpus", "all"], "status": "PENDING_CDI_AND_APPROVED_IMAGE"}
+    "host_gpu": {
+      "command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+      "observed": "NVIDIA GeForce RTX 5060, 595.71.05, 8151 MiB",
+      "captured_at": "2026-08-04"
+    },
+    "nvidia_container_toolkit": {
+      "command": ["nvidia-ctk", "--version"],
+      "observed": "NVIDIA Container Toolkit CLI version 1.19.1",
+      "captured_at": "2026-08-04"
+    },
+    "cdi_devices": {
+      "command": ["nvidia-ctk", "cdi", "list"],
+      "observed": ["nvidia.com/gpu=0", "nvidia.com/gpu=GPU-4eb65606-2e73-b85c-9257-79b8ee079886", "nvidia.com/gpu=all"],
+      "captured_at": "2026-08-04"
+    },
+    "docker": {
+      "command": ["docker", "info", "--format", "{{.ServerVersion}} {{.Architecture}} {{.DefaultRuntime}} {{.Driver}}"],
+      "observed": "29.6.2 x86_64 runc overlayfs",
+      "captured_at": "2026-08-04"
+    },
+    "container_gpu_smoke": {
+      "command": ["docker", "run", "--rm", "--gpus", "all", "hello-world"],
+      "status": "READY",
+      "captured_at": "2026-08-04"
+    },
+    "triton_pull": {
+      "image": "nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a",
+      "platform": "linux/amd64",
+      "status": "PENDING_NVIDIA_NGC_EULA_ACCEPTANCE_AND_AUTHORIZED_PULL"
+    }
   },
   "direct_dependencies": []
 }

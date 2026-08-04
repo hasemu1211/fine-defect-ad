@@ -69,6 +69,11 @@ class R0Tests(unittest.TestCase):
     plan={'run_id':'cli','allocations':[{'root':'artifact','bytes':1,'kind':'persistent','source':'tiny-r0-evidence','component_id':'cli'}],'reserve_bytes':1,'reserve_evidence':{'max_pending_atomic_write_bytes':1,'measured_high_water_bytes':0,'runtime_or_source_citation':'tiny-plan'}}
     p=roots['temp']/'plan.json'; p.write_text(json.dumps(plan)); self.assertEqual(preflight_main(['--plan',str(p)]),0)
     plan.pop('reserve_evidence'); p.write_text(json.dumps(plan)); self.assertEqual(preflight_main(['--plan',str(p)]),2)
+ def test_proof_uses_stable_docker_storage_identity(self):
+  raw,roots,env,mount,docker=self._storage()
+  with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',side_effect=[docker,{**docker,'evidence':{**docker['evidence'],'stdout':'new docker info SystemTime'}}]):
+   proof=preflight(run_id='r',allocations=[Allocation('artifact',1,'persistent','x','x')],reserve_bytes=0,reserve_evidence={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'})
+   require_proof(proof,run_id='r')
  def test_storage_enospc_invalidates_same_run(self):
   raw,roots,env,mount,docker=self._storage()
   with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',return_value=docker):
