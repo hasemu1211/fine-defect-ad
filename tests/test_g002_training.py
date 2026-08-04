@@ -283,7 +283,12 @@ import tempfile, torch
 from fine_defect_ad.g002_training import trusted_resume_checkpoint_io
 with tempfile.TemporaryDirectory() as d:
  p=Path(d)/"x.ckpt"; torch.save({"path":Path("local")},p)
- assert trusted_resume_checkpoint_io(p, __import__("hashlib").sha256(p.read_bytes()).hexdigest(), Path(d)).load_checkpoint(p)["path"] == Path("local")
+ io = trusted_resume_checkpoint_io(p, __import__("hashlib").sha256(p.read_bytes()).hexdigest(), Path(d))
+ assert io.load_checkpoint(p)["path"] == Path("local")
+ p.write_bytes(b"changed")
+ try: io.load_checkpoint(p)
+ except Exception: pass
+ else: raise AssertionError("changed checkpoint was loaded")
 '''
         env={**os.environ,'PYTHONPATH':f'{Path.cwd()/"src"}:{Path.cwd()/".internal/venv/r1-overlay"}'}
         subprocess.run([str(python),'-c',textwrap.dedent(code)],check=True,env=env,capture_output=True)
