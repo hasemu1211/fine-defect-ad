@@ -81,7 +81,7 @@ def public_attempt(run_id: str, pilot: Mapping[str, Any], *, cause: str | None =
 
 def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn=preflight,
                  lease_factory=GpuLease, runtime_factory=_lazy_runtime,
-                 artifacts_factory=None, lease_event_loader=lease_events, torch_module=None) -> dict[str, Any]:
+                 artifacts_factory=None, lease_event_loader=lease_events, torch_module=None, callback_base=None) -> dict[str, Any]:
     """Full fixed-schedule run; only integrity failures stop it before 70k."""
     try:
         pilot = admit_pilot_fn(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
@@ -100,7 +100,10 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             torch = torch_module
             if torch is None:
                 import torch
-            from lightning.pytorch import Callback
+            if callback_base is None:
+                from lightning.pytorch import Callback
+            else:
+                Callback = callback_base
             artifacts = (artifacts_factory or TrainingArtifacts)(Path(proof.roots["artifact"]), args.run_id, identity)
             pending = {"signal": None}
             class SafetyMetrics(Callback):
