@@ -135,7 +135,6 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
             metrics_path = artifacts.metrics(safety.rows)
             if lease.pending_signal: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
-            else: artifacts.final({"run_id":args.run_id,"status":READY,"checkpoint_sha256":file_sha256(checkpoint_path),"metrics_sha256":file_sha256(metrics_path),"resume_exactness":"NOT_ESTABLISHED"})
 
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
