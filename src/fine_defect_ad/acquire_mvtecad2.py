@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -77,15 +78,61 @@ def load_terms_ack(path: Path) -> dict:
 
 
 def archive_plan(run_id: str) -> dict:
-    """The atomic rename has one persistent archive allocation, not two copies."""
+    """Archive metadata is sizing only; extraction evidence authorizes download."""
     return {
+        "status": "SIZING_ONLY_NOT_DOWNLOAD_AUTHORIZED", "workflow_status": STOPPED_INCOMPLETE,
         "run_id": run_id,
         "allocations": [{"root": "data", "bytes": ARCHIVE_BYTES, "kind": "persistent", "component_id": "mvtecad2-archive", "source": ANOMALIB_PROVENANCE}],
         "reserve_bytes": 0,
-        "reserve_evidence": {"max_pending_atomic_write_bytes": 0, "measured_high_water_bytes": 0, "runtime_or_source_citation": "same-inode .partial to final atomic rename; one persistent archive allocation"},
+        "reserve_evidence": {"max_pending_atomic_write_bytes": 0, "measured_high_water_bytes": 0, "runtime_or_source_citation": "same-inode .partial to final atomic rename; archive only, extraction peak unknown"},
         "archive": {"url": ARCHIVE_URL, "content_length": ARCHIVE_BYTES, "sha256": ARCHIVE_SHA256, "provenance": ANOMALIB_PROVENANCE},
     }
 
+
+def load_extraction_evidence(path: Path) -> dict:
+    """Accept only exact, independently measured tar extraction sizing."""
+    try:
+        evidence = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StorageBlocked("exact extraction sizing evidence is required") from exc
+    required = {"exact_uncompressed_bytes", "max_member_bytes", "derivation"}
+    if not isinstance(evidence, dict) or set(evidence) != required:
+        raise StorageBlocked("extraction sizing evidence must contain exact bytes, max member, and derivation")
+    total, member, derivation = evidence["exact_uncompressed_bytes"], evidence["max_member_bytes"], evidence["derivation"]
+    if not isinstance(total, int) or total < 0 or not isinstance(member, int) or member < 0 or member > total or not isinstance(derivation, str) or not derivation:
+        raise StorageBlocked("invalid exact extraction sizing evidence")
+    return evidence
+
+
+def acquisition_plan(run_id: str, extraction_evidence: dict) -> dict:
+    archive = archive_plan(run_id)
+    total, member = extraction_evidence["exact_uncompressed_bytes"], extraction_evidence["max_member_bytes"]
+    archive.update({
+        "status": "DOWNLOAD_AUTHORIZED_PLAN",
+        "allocations": [
+            *archive["allocations"],
+            {"root": "data", "bytes": total, "kind": "persistent", "component_id": "mvtecad2-extraction", "source": extraction_evidence["derivation"], "exact_uncompressed_bytes_source": extraction_evidence["derivation"]},
+            {"root": "data", "bytes": member, "kind": "transient", "component_id": "mvtecad2-extraction-member", "source": extraction_evidence["derivation"]},
+        ],
+    })
+    archive["reserve_evidence"]["runtime_or_source_citation"] = "archive plus exact extraction persistent bytes and maximum member transient bytes; " + extraction_evidence["derivation"]
+    return archive
+
+
+def audit_metadata(*, terms_ack: Path, url: str = ARCHIVE_URL, opener: Callable = urllib.request.urlopen) -> dict:
+    """Stream tar headers only after terms acceptance; never writes or proves readiness."""
+    load_terms_ack(terms_ack)
+    if url != ARCHIVE_URL:
+        raise StorageBlocked("archive URL must match pinned anomalib provenance")
+    with opener(urllib.request.Request(url), timeout=60) as response:
+        if response.status != 200 or response.headers.get("Content-Length") != str(ARCHIVE_BYTES):
+            raise StorageBlocked("Content-Length does not match pinned archive size")
+        total = maximum = 0
+        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+            for member in archive:
+                total += member.size; maximum = max(maximum, member.size)
+    return {"status": "SIZING_AUDIT_ONLY_NOT_STORAGE_READY", "exact_uncompressed_bytes": total, "max_member_bytes": maximum,
+            "derivation": "tar stream member-size count from pinned archive; no archive body was written"}
 
 def _hash_prefix(path: Path) -> tuple[hashlib._Hash, int]:
     digest = hashlib.sha256()
@@ -122,9 +169,10 @@ def _stop_enospc(proof, run_id: str, partial: Path) -> dict:
     return {"status": INVALIDATED, "workflow_status": STOPPED_INCOMPLETE, "run_id": run_id, "cause": "ENOSPC"}
 
 
-def download(*, run_id: str, terms_ack: Path, destination: Path | None = None, url: str = ARCHIVE_URL, opener: Callable = urllib.request.urlopen) -> dict:
-    """Download only after acknowledgement and a fresh storage proof; preserves failures."""
+def download(*, run_id: str, terms_ack: Path, extraction_evidence: Path, destination: Path | None = None, url: str = ARCHIVE_URL, opener: Callable = urllib.request.urlopen) -> dict:
+    """Download only after terms, exact extraction sizing, and a fresh storage proof."""
     load_terms_ack(terms_ack)
+    sizing = load_extraction_evidence(extraction_evidence)
     if url != ARCHIVE_URL:
         raise StorageBlocked("archive URL must match pinned anomalib provenance")
     roots = roots_from_env()
@@ -133,12 +181,18 @@ def download(*, run_id: str, terms_ack: Path, destination: Path | None = None, u
         raise StorageBlocked("archive destination must remain under data root")
     if _validate_existing(final):
         return {"status": READY, "run_id": run_id, "path": str(final), "existing": True}
-    plan = archive_plan(run_id)
+    plan = acquisition_plan(run_id, sizing)
     proof = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=plan["reserve_bytes"], reserve_evidence=plan["reserve_evidence"])
     partial = final.with_name("." + final.name + ".partial")
     digest, offset = _hash_prefix(partial)
     if offset > ARCHIVE_BYTES:
         raise StorageBlocked("partial archive exceeds expected size")
+    if offset == ARCHIVE_BYTES:
+        if digest.hexdigest() != ARCHIVE_SHA256:
+            raise StorageBlocked("complete partial archive hash mismatch; partial preserved")
+        require_proof(proof, run_id=run_id)
+        os.replace(partial, final)
+        return {"status": READY, "run_id": run_id, "path": str(final), "sha256": ARCHIVE_SHA256, "resumed": True}
     headers = {"Range": f"bytes={offset}-"} if offset else {}
     try:
         with opener(urllib.request.Request(url, headers=headers), timeout=60) as response:
@@ -148,7 +202,7 @@ def download(*, run_id: str, terms_ack: Path, destination: Path | None = None, u
                 if length != str(ARCHIVE_BYTES - offset): raise StorageBlocked("resumed Content-Length mismatch")
             elif response.status != 200 or length != str(ARCHIVE_BYTES):
                 raise StorageBlocked("Content-Length does not match pinned archive size")
-            require_proof(proof, run_id=run_id)  # immediately before material write
+            require_proof(proof, run_id=run_id)
             final.parent.mkdir(parents=True, exist_ok=True)
             with partial.open("ab" if offset else "wb") as output:
                 for block in iter(lambda: response.read(1024 * 1024), b""):
@@ -163,17 +217,22 @@ def download(*, run_id: str, terms_ack: Path, destination: Path | None = None, u
     os.replace(partial, final)
     return {"status": READY, "run_id": run_id, "path": str(final), "sha256": ARCHIVE_SHA256}
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True); parser.add_argument("--terms-ack", type=Path)
-    parser.add_argument("--destination", type=Path); parser.add_argument("--plan", action="store_true")
+    parser.add_argument("--destination", type=Path); parser.add_argument("--extraction-evidence", type=Path)
+    parser.add_argument("--plan", action="store_true"); parser.add_argument("--metadata-audit", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.plan:
-            print(json.dumps(archive_plan(args.run_id), sort_keys=True)); return 0
-        if not args.terms_ack: raise StorageBlocked("--terms-ack is required before download")
-        print(json.dumps(download(run_id=args.run_id, terms_ack=args.terms_ack, destination=args.destination), sort_keys=True)); return 0
+            plan = acquisition_plan(args.run_id, load_extraction_evidence(args.extraction_evidence)) if args.extraction_evidence else archive_plan(args.run_id)
+            print(json.dumps(plan, sort_keys=True)); return 0
+        if not args.terms_ack: raise StorageBlocked("--terms-ack is required")
+        load_terms_ack(args.terms_ack)
+        if args.metadata_audit:
+            print(json.dumps(audit_metadata(terms_ack=args.terms_ack), sort_keys=True)); return 0
+        if not args.extraction_evidence: raise StorageBlocked("--extraction-evidence is required before download")
+        print(json.dumps(download(run_id=args.run_id, terms_ack=args.terms_ack, extraction_evidence=args.extraction_evidence, destination=args.destination), sort_keys=True)); return 0
     except (OSError, StorageBlocked, urllib.error.URLError) as exc:
         print(json.dumps({"status": "STORAGE_BLOCKED", "workflow_status": STOPPED_INCOMPLETE, "reason": str(exc)})); return 2
 
