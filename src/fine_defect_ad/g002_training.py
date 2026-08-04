@@ -166,10 +166,10 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--pilot-evidence", type=Path, required=True); parser.add_argument("--run-id", required=True)
-    parser.add_argument("--checkpoint-directory", type=Path, required=True); parser.add_argument("--metrics-path", type=Path, required=True)
+    parser.add_argument("--checkpoint-directory", type=Path, required=True); parser.add_argument("--metrics-path", type=Path, required=True); parser.add_argument("--resume-checkpoint", type=Path)
     parser.add_argument("--dataset-root", type=Path, required=True); parser.add_argument("--teacher-small", type=Path, required=True); parser.add_argument("--imagenette-root", type=Path, required=True); parser.add_argument("--lease-directory", type=Path, required=True)
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
-    result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
+    result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002, raw.resume_checkpoint)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
     """Serialize Lightning's full connector checkpoint (loops/optimizers/RNG), not weights-only."""
