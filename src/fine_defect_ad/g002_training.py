@@ -123,7 +123,10 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                         artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
-                    row = {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]),"rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)}
+                    losses = {name: float(trainer.callback_metrics.get(name, float("nan"))) for name in ("train_loss", "train_st", "train_ae", "train_stae")}
+                    row = {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]), **losses, "rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)}
+                    if not math.isfinite(row["lr"]): raise RuntimeError("NONFINITE_LR")
+                    if any(not math.isfinite(value) for value in losses.values()): raise RuntimeError("NONFINITE_LOSS")
                     if not all(math.isfinite(float(value)) for value in row.values() if isinstance(value, (int,float))): raise RuntimeError("NONFINITE_METRIC")
                     self.rows.append(row); artifacts.metrics(self.rows)
             from .pilot import PilotEvidence
