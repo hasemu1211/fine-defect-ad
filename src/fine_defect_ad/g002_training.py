@@ -1,14 +1,15 @@
 """G002 fixed-schedule training admission and lightweight runtime instrumentation."""
 from __future__ import annotations
 
-import argparse, csv, json, math, os, signal, time
+import argparse, csv, json, math, os, signal, time, subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .g002_pilot import G002Args, _lazy_runtime
+from .g002_pilot import G002Args, _lazy_runtime, verify_local_assets, train_val_file_identity, _sha256
 from .gpu_lock import GpuLease
+from .storage import Allocation, atomic_write, preflight
 from .pilot import MAX_STEPS, READY, STOPPED_INCOMPLETE, expected_pilot_protocol_metadata, host_rss_bytes
 
 PILOT_SHA256 = "0a5fc82e0e306cdd34ac8e5ee925e895010945816af6645dea4eb5be8aa9013c"
@@ -29,6 +30,21 @@ class TrainingArgs:
 
 def file_sha256(path: Path) -> str:
     return sha256(Path(path).read_bytes()).hexdigest()
+
+
+def training_identity(args: G002Args) -> dict[str, Any]:
+    assets = verify_local_assets(args)
+    return {"teacher_sha256": assets["teacher_small"]["sha256"], "data": assets["file_identity"],
+            "protocol": expected_pilot_protocol_metadata(),
+            "git": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()}
+
+
+def _atomic_jsonl(path: Path, row: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(dict(row), sort_keys=True, allow_nan=False) + "\n"
+    temporary = path.with_suffix(path.suffix + ".partial")
+    with temporary.open("a") as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
 
 def admit_pilot(path: Path) -> dict[str, Any]:
@@ -73,40 +89,49 @@ def public_attempt(run_id: str, pilot: Mapping[str, Any], *, cause: str | None =
 
 
 def run_training(args: TrainingArgs) -> dict[str, Any]:
-    """Lazy full runner. No validation/test/predict or model selection is invoked."""
+    """Full fixed-schedule run; only integrity failures stop it before 70k."""
     try:
-        pilot = admit_pilot(args.pilot_evidence)
-        interval = checkpoint_interval_steps(pilot)
-        if args.resume_checkpoint:
-            validate_resume(args.resume_checkpoint, args.resume_checkpoint.with_suffix(args.resume_checkpoint.suffix + ".json"))
+        pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
+        identity = training_identity(args.g002)
+        if args.resume_checkpoint: validate_resume(args.resume_checkpoint, args.resume_checkpoint.with_suffix(args.resume_checkpoint.suffix + ".json"), identity)
+        # Bound the rolling checkpoint, its incoming atomic file, metrics, final evidence and lease metadata.
+        estimate = max(1, args.resume_checkpoint.stat().st_size if args.resume_checkpoint and args.resume_checkpoint.exists() else 2_000_000_000)
+        source = "checkpoint size: prior verified checkpoint or conservative 2GB initial bound"
+        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", estimate, "persistent", source, "g002-last-checkpoint"), Allocation("artifact", estimate, "transient", source, "g002-checkpoint-incoming"), Allocation("artifact", 10_000_000, "persistent", "70k epoch JSONL upper bound", "g002-metrics")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
-    # Runtime-only imports are inside the GPU lease, after admission.
     cause = None
     try:
         with GpuLease(args.g002.lease_directory, args.run_id, "g002-training"):
+            import torch
             from lightning.pytorch import Callback
-            class Metrics(Callback):
-                def __init__(self): self.rows: list[dict[str, Any]] = []
+            from lightning.pytorch.callbacks import ModelCheckpoint
+            checkpoint = ModelCheckpoint(dirpath=args.checkpoint_directory, filename="last", save_last=True, save_top_k=0, every_n_train_steps=interval)
+            pending = {"signal": None}
+            previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+            for sig in previous: signal.signal(sig, lambda signum, frame: pending.update(signal=signum))
+            class SafetyMetrics(Callback):
+                def __init__(self): self.started = time.monotonic()
+                def on_before_optimizer_step(self, trainer, module, optimizer):
+                    if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
+                def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
+                    if pending["signal"]:
+                        trainer.save_checkpoint(str(args.checkpoint_directory / "last.ckpt")); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
-                    metrics = {k: float(v) for k, v in trainer.callback_metrics.items() if "loss" in k or k == "lr"}
-                    self.rows.append({"epoch": trainer.current_epoch, "global_step": trainer.global_step,
-                                      "rss_bytes": host_rss_bytes(), **metrics})
-            # Reuse the scoped train/validation-only G002 model/datamodule; no pilot stop callback.
+                    step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
+                    _atomic_jsonl(args.metrics_path, {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]),"rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)})
             from .pilot import PilotEvidence
-            model, module, trainer, _validator = _lazy_runtime(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
-            metrics = Metrics(); trainer.callbacks.append(metrics)
+            model, module, trainer, _ = _lazy_runtime(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
+            trainer.callbacks.extend([checkpoint, SafetyMetrics()])
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
-            # Logs are small epoch rows; caller must preflight their bounded bytes before production launch.
-            args.metrics_path.parent.mkdir(parents=True, exist_ok=True)
-            with args.metrics_path.open("w", newline="") as stream:
-                writer = csv.DictWriter(stream, fieldnames=sorted({k for row in metrics.rows for k in row})); writer.writeheader(); writer.writerows(metrics.rows)
+            for sig, old in previous.items(): signal.signal(sig, old)
+            last = Path(checkpoint.last_model_path)
+            if not last.is_file() or not args.metrics_path.is_file(): raise RuntimeError("MISSING_VERIFIED_CHECKPOINT_OR_METRICS")
+            last.with_suffix(last.suffix+".json").write_text(json.dumps(resume_sidecar(last,PILOT_SHA256,identity),sort_keys=True))
     except Exception as exc:
-        cause = f"RUNNER:{type(exc).__name__}"
-    record = public_attempt(args.run_id, pilot, cause=cause)
-    record["checkpoint_interval_steps"] = interval
+        cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
+    record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
     return record
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--pilot-evidence", type=Path, required=True); parser.add_argument("--run-id", required=True)
