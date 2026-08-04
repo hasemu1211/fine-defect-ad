@@ -40,10 +40,12 @@ def training_identity(args: G002Args) -> dict[str, Any]:
 
 
 def _atomic_jsonl(path: Path, row: Mapping[str, Any]) -> None:
+    """Atomic cumulative JSONL snapshot: prior rows survive each epoch update."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(dict(row), sort_keys=True, allow_nan=False) + "\n"
+    previous = path.read_text() if path.exists() else ""
+    payload = previous + json.dumps(dict(row), sort_keys=True, allow_nan=False) + "\n"
     temporary = path.with_suffix(path.suffix + ".partial")
-    with temporary.open("a") as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+    with temporary.open("w") as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
     os.replace(temporary, path)
 
 
@@ -128,6 +130,8 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
             last = Path(checkpoint.last_model_path)
             if not last.is_file() or not args.metrics_path.is_file(): raise RuntimeError("MISSING_VERIFIED_CHECKPOINT_OR_METRICS")
             last.with_suffix(last.suffix+".json").write_text(json.dumps(resume_sidecar(last,PILOT_SHA256,identity),sort_keys=True))
+            if pending["signal"]: cause = "INTERRUPTED_RESUMABLE"
+            elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
