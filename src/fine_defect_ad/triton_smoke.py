@@ -10,6 +10,7 @@ import subprocess
 
 from .evidence import validate_evidence
 from .gpu_lock import BusyError, GpuLease
+from .storage import Allocation, preflight, require_proof
 
 IMAGE = 'nvcr.io/nvidia/tritonserver@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a'
 
@@ -66,13 +67,17 @@ def _image() -> dict:
     return {'id': info['Id'], 'repo_digests': info.get('RepoDigests', []), 'size_bytes': info['Size']}
 
 def _write_model(model_repo: Path) -> str:
-    torch_python = os.environ.get('FINE_DEFECT_TORCH_PYTHON')
-    if not torch_python: raise RuntimeError('FINE_DEFECT_TORCH_PYTHON is required to create the TorchScript smoke model')
+    torch_python = os.environ.get('FINE_DEFECT_HOST_PYTHON')
+    if not torch_python: raise RuntimeError('FINE_DEFECT_HOST_PYTHON is required to create the TorchScript smoke model')
     result = subprocess.run([torch_python, '-c', _MODEL_PROGRAM, str(model_repo)], text=True, capture_output=True, check=True)
     return result.stdout.strip()
 
-def run_smoke(artifact_root: Path, run_id: str) -> dict:
+def run_smoke(artifact_root: Path, run_id: str, plan_path: Path) -> dict:
     artifact_root = Path(artifact_root); model_repo = artifact_root / 'triton-r0-smoke-model-repo'; raw_dir = artifact_root / 'triton-r0-smoke-raw'
+    plan = json.loads(Path(plan_path).read_text())
+    if plan.get('run_id') != run_id: raise RuntimeError('smoke storage plan run_id does not match')
+    proof = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan['allocations']], reserve_bytes=plan['reserve_bytes'], reserve_evidence=plan['reserve_evidence'])
+    require_proof(proof, run_id=run_id)
     model_repo.mkdir(parents=True, exist_ok=True); raw_dir.mkdir(parents=True, exist_ok=True)
     host_torch = _write_model(model_repo)
     command = build_container_command(model_repo)
@@ -82,6 +87,7 @@ def run_smoke(artifact_root: Path, run_id: str) -> dict:
                 raise AssertionError('contention probe acquired the primary lease')
         except BusyError as exc:
             contention = {'status': 'BUSY', 'message': str(exc)}
+        require_proof(proof, run_id=run_id)
         result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=90)
     lease_events = []
     for path in (artifact_root / 'gpu-heavy-events').glob('*.json'):
@@ -96,14 +102,15 @@ def run_smoke(artifact_root: Path, run_id: str) -> dict:
               'command': 'docker run --rm --gpus all --log-driver=none <pinned-triton-digest> python3 -c <R0 smoke>',
               'status': 'READY', 'limitations': ['single fixed-shape add-one smoke; not a performance or production serving claim'],
               'lock_mode': 'fcntl.flock', 'image': _image(), 'container': {**container, 'model_generator_torch_version': host_torch}, 'contention': contention,
-              'lease_events': sorted(lease_events, key=lambda event: event['timestamp'])}
+              'lease_events': sorted(lease_events, key=lambda event: event['timestamp']),
+              'storage_preflight': {'run_id': proof.run_id, 'fingerprint': proof.fingerprint, 'created_at': proof.created_at}}
     validate_evidence(record)
     return record
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(); parser.add_argument('--artifact-root', required=True); parser.add_argument('--run-id', default='triton-r0-smoke')
+    parser = argparse.ArgumentParser(); parser.add_argument('--artifact-root', required=True); parser.add_argument('--plan', required=True); parser.add_argument('--run-id', default='triton-r0-smoke')
     args = parser.parse_args(argv)
-    record = run_smoke(Path(args.artifact_root), args.run_id)
+    record = run_smoke(Path(args.artifact_root), args.run_id, Path(args.plan))
     print(json.dumps(record, sort_keys=True)); return 0
 
 if __name__ == '__main__': raise SystemExit(main())

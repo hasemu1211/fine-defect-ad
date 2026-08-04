@@ -20,6 +20,13 @@
     "docker": {
       "command": ["docker", "info", "--format", "{{.ServerVersion}} {{.Architecture}} {{.DefaultRuntime}} {{.Driver}}"],
       "observed": "29.6.2 x86_64 runc overlayfs",
+      "access_mode": "no_sudo_non_rootless",
+      "captured_at": "2026-08-04"
+    },
+    "host_tensor_smoke": {
+      "command": ["$FINE_DEFECT_HOST_PYTHON", "-c", "import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.version.cuda, torch.cuda.mem_get_info()[1])"],
+      "status": "READY",
+      "observed": "PyTorch 2.7.0+cu128, CUDA 12.8, total GPU memory 8046772224 bytes",
       "captured_at": "2026-08-04"
     },
     "container_gpu_smoke": {

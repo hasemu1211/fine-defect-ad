@@ -94,8 +94,10 @@ class R0Tests(unittest.TestCase):
     self.assertEqual(atomic_write(roots['artifact']/'x',b'ok',proof=proof,run_id='r')['status'],'INVALIDATED')
    with self.assertRaises(Exception): require_proof(proof,run_id='r')
  def test_docker_discovery_mismatch_and_cdi_failure(self):
-  with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','info'],'returncode':0,'stdout':'{"DockerRootDir":"/d","Driver":"overlayfs","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"],["Backing Filesystem","ext4"]]}','stderr':''}):
-   found=discover_docker_storage(); self.assertEqual(found['status'],'READY'); self.assertEqual(found['driver_type'],'io.containerd.snapshotter.v1')
+  with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','info'],'returncode':0,'stdout':'{"DockerRootDir":"/d","Driver":"overlayfs","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"],["Backing Filesystem","ext4"]],"SecurityOptions":["name=rootless"]}','stderr':''}):
+   found=discover_docker_storage(); self.assertEqual(found['status'],'READY'); self.assertEqual(found['driver_type'],'io.containerd.snapshotter.v1'); self.assertEqual(found['access_mode'],'rootless')
+  with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','info'],'returncode':0,'stdout':'{"DockerRootDir":"/d","Driver":"overlayfs","DriverStatus":[],"SecurityOptions":["name=seccomp"]}','stderr':''}):
+   self.assertEqual(discover_docker_storage()['access_mode'],'no_sudo_non_rootless')
   with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','run'],'returncode':1,'stdout':'','stderr':'CDI device error'}):
    self.assertEqual(container_gpu_spike('approved:image')['reason'],'DOCKER_CDI_GPU_UNAVAILABLE')
   self.assertEqual(collect_runtime_evidence()['status'],'STOPPED_INCOMPLETE')
