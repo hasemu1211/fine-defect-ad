@@ -236,3 +236,17 @@ def validate_training_lease(events: Sequence[Mapping[str, Any]], run_id: str, ou
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+def select_resume_slot(checkpoint: Path, identity: Mapping[str, Any]) -> Path:
+    """Use the requested slot if valid, otherwise only its two-slot sibling."""
+    checkpoint = Path(checkpoint)
+    candidates = [checkpoint]
+    name = checkpoint.name
+    if name.endswith("-0.ckpt"): candidates.append(checkpoint.with_name(name[:-6] + "1.ckpt"))
+    elif name.endswith("-1.ckpt"): candidates.append(checkpoint.with_name(name[:-6] + "0.ckpt"))
+    valid = []
+    for candidate in candidates:
+        try: valid.append((validate_slot_resume(candidate, identity)["global_step"], candidate))
+        except (OSError, ValueError, TrainingBlocked, json.JSONDecodeError): pass
+    if not valid: raise TrainingBlocked("no valid sibling checkpoint slot")
+    return max(valid, key=lambda item: item[0])[1]

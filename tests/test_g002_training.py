@@ -75,3 +75,15 @@ class TrainingArtifactTests(TestCase):
         events=[{'state':'acquired','run_id':'r','command':'g002-training'},{'state':'released','run_id':'r','command':'g002-training','outcome':'normal'}]
         validate_training_lease(events,'r','normal')
         with self.assertRaises(TrainingBlocked): validate_training_lease(events,'r','signal:15')
+
+    def test_resume_falls_back_only_to_valid_sibling_slot(self):
+        from fine_defect_ad.g002_training import select_resume_slot, file_sha256
+        with TemporaryDirectory() as raw:
+            root=Path(raw); identity={'a':1}; ih=sha256(json.dumps(identity,separators=(',',':'),sort_keys=True).encode()).hexdigest()
+            for slot, step in ((0,2),(1,3)):
+                cp=root/f'g002-last-run-{slot}.ckpt'; cp.write_bytes(str(slot).encode())
+                cp.with_suffix('.ckpt.json').write_text(json.dumps({'checkpoint_name':cp.name,'checkpoint_sha256':file_sha256(cp),'identity_sha256':ih,'pilot_sha256':PILOT_SHA256,'global_step':step,'lineage':'run','resume_exactness':'NOT_ESTABLISHED'}))
+            bad=root/'g002-last-run-1.ckpt'; bad.write_bytes(b'corrupt')
+            self.assertTrue(select_resume_slot(bad,identity).name.endswith('-0.ckpt'))
+            (root/'g002-last-run-0.ckpt.json').unlink()
+            with self.assertRaises(TrainingBlocked): select_resume_slot(bad,identity)
