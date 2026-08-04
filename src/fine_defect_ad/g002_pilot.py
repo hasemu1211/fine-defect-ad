@@ -184,6 +184,9 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
             category = self.root / CATEGORY
             self.train_data = ScopedNormalDataset(category / "train" / "good", "train", self.train_augmentations)
             self.val_data = ScopedNormalDataset(category / "validation" / "good", "val", self.val_augmentations)
+            # Base setup also propagates the model Resize; call only this helper after both
+            # scoped datasets exist. It skips absent test_data and never constructs it.
+            self._update_augmentations()
             if len(self.train_data) != 137 or len(self.val_data) != 19:
                 raise ValueError("G002 requires exactly 137 train and 19 validation images")
 

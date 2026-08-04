@@ -91,3 +91,40 @@ class G002BoundaryTests(unittest.TestCase):
             self.assertTrue(captured)
             self.assertNotIn(str(root).encode(), captured[0])
             self.assertNotIn(b'"path"', captured[0])
+
+class G002OverlayDataSmokeTests(unittest.TestCase):
+    def test_scoped_samples_transform_and_collate_without_test_access(self):
+        """Runs only when the separately installed overlay is available; never fits."""
+        import os, shutil, subprocess, textwrap
+        python = Path("/home/codelab/Desktop/Project/WNTAD/.venv/bin/python")
+        if not python.exists() or not Path(".internal/venv/r1-overlay/anomalib").is_dir():
+            self.skipTest("R1 overlay is unavailable")
+        script = r'''
+import base64, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from fine_defect_ad.g002_pilot import G002Args, _lazy_runtime
+from fine_defect_ad.pilot import PilotEvidence, expected_pilot_protocol_metadata
+png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+with tempfile.TemporaryDirectory() as raw:
+    root = Path(raw); category = root / "sheet_metal"
+    for split, count in (("train", 137), ("validation", 19)):
+        leaf = category / split / "good"; leaf.mkdir(parents=True)
+        for index in range(count): (leaf / f"{index:03d}.png").write_bytes(png)
+    forbidden = category / "test_public" / "bad"; forbidden.mkdir(parents=True); (forbidden / "x.png").write_bytes(png)
+    args = G002Args(root, root / "teacher.pth", root / "imagenette", "g002-smoke", root / "lease")
+    model, module, _, _ = _lazy_runtime(args, PilotEvidence("g002-smoke", "smoke", 70000, expected_pilot_protocol_metadata()), 0)
+    module.trainer = SimpleNamespace(model=model)
+    calls, original = [], Path.glob
+    def spy(path, pattern): calls.append((str(path), pattern)); return original(path, pattern)
+    Path.glob = spy
+    try: module.setup("fit")
+    finally: Path.glob = original
+    assert not any("test" in path or pattern == "**/*" for path, pattern in calls)
+    assert type(module.train_data.augmentations).__name__ == "Resize"
+    assert tuple(module.train_data.augmentations.size) == (256, 256)
+    batch = module.train_data.collate_fn([module.train_data[0]])
+    assert tuple(batch.image.shape[-2:]) == (256, 256)
+'''
+        env = {**os.environ, "PYTHONPATH": f"{Path.cwd() / 'src'}:{Path.cwd() / '.internal/venv/r1-overlay'}"}
+        subprocess.run([str(python), "-c", textwrap.dedent(script)], check=True, env=env, capture_output=True)
