@@ -50,3 +50,16 @@ class TrainingArtifactTests(TestCase):
             cp, side=a.checkpoint(2,lambda:b'checkpoint')
             self.assertTrue(cp.is_file() and side.is_file()); self.assertTrue(a.metrics([{'loss':1}]).is_file())
             self.assertEqual(len(writes),3)
+
+    def test_two_checkpoint_commits_use_independent_slots(self):
+        from datetime import datetime, timezone
+        from fine_defect_ad.g002_training import TrainingArtifacts
+        from fine_defect_ad.storage import PreflightProof
+        with TemporaryDirectory() as raw:
+            root=Path(raw)
+            def admit(**kwargs): return PreflightProof('run',{'artifact':str(root)},'f',datetime.now(timezone.utc).isoformat(),{},[],{'reserve_bytes':kwargs['reserve_bytes']})
+            def writer(path,payload,**kwargs): Path(path).write_bytes(payload); return {'status':'READY'}
+            a=TrainingArtifacts(root,'run',{'i':1},admit,writer)
+            first,_=a.checkpoint(1,lambda:b'a'); second,_=a.checkpoint(2,lambda:b'b')
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.read_bytes(), b'a')
