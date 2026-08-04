@@ -100,7 +100,7 @@ def _lazy_runtime(args: G002Args, evidence: PilotEvidence, started: float) -> tu
     """Construct no-download runtime classes only after assets and lease admission."""
     import torch
     from lightning.pytorch import Callback, Trainer, seed_everything
-    from anomalib.data import MVTecAD2Dataset
+    from anomalib.data.datasets.image.mvtecad2 import MVTecAD2Dataset
     from anomalib.data.datamodules.base.image import AnomalibDataModule
     from anomalib.data.utils import Split
     from anomalib.models import EfficientAd
