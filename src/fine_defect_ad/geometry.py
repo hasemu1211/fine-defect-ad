@@ -104,46 +104,37 @@ def synthetic_diagnostics(*, corrupt=False):
             "claim": NO_EXTERNAL_MINIMUM_AVAILABLE}
 
 def empirical_border_distance_diagnostic(observations: Iterable[Mapping[str, Any]], *, approved_validation_identities: Iterable[Any]) -> dict[str, Any]:
-    """Derive one complete 256px plan from repeated normal/probe validation pixels."""
-    approved = set()
-    for item in approved_validation_identities:
-        identity = item[0] if isinstance(item, tuple) else item.get("path") if isinstance(item, Mapping) else item
-        if not isinstance(identity, str): raise ValueError("invalid approved validation identity")
-        approved.add(identity)
-    if not approved: raise ValueError("approved validation identities required")
-    groups: dict[tuple[str, str, tuple[int, int]], list[tuple[int, float]]] = {}
+    """Derive a validation-only border from local repeated origin evidence (never test/OOD)."""
+    approved={item[0] if isinstance(item,tuple) else item.get("path") if isinstance(item,Mapping) else item for item in approved_validation_identities}
+    if not approved or not all(isinstance(item,str) for item in approved): raise ValueError("approved validation identities required")
+    allowed={"image_identity","pixel","origin","tile_shape","score","kind","family","case","polarity"}; groups={}
     for row in observations:
-        if set(row) != {"image_identity", "pixel", "origin", "tile_shape", "score", "kind"}: raise ValueError("test/OOD/metadata forbidden")
-        identity, pixel, origin, tile, kind = row["image_identity"], row["pixel"], row["origin"], row["tile_shape"], row["kind"]
-        folded = identity.casefold() if isinstance(identity, str) else ""
-        if (not isinstance(identity, str) or identity not in approved or not identity.startswith("validation/good/") or identity.startswith("/")
-                or ".." in identity.split("/") or any(token in segment for segment in folded.split("/") if segment != "good" for token in ("test", "ood", "private"))
-                or tuple(tile) != (256, 256) or kind not in {"normal", "probe_delta"} or not all(isinstance(v, int) for v in (*pixel, *origin)) or not isfinite(row["score"])):
-            raise ValueError("invalid validation observation")
-        local = (pixel[0] - origin[0], pixel[1] - origin[1])
-        if not 0 <= local[0] < 256 or not 0 <= local[1] < 256: raise ValueError("pixel is outside tile origin")
-        groups.setdefault((kind, identity, tuple(pixel)), []).append((min(local[0], local[1], 255-local[0], 255-local[1]), float(row["score"])))
-    if not groups or {key[0] for key in groups} != {"normal", "probe_delta"}: raise ValueError("normal and probe_delta evidence required")
-    repeatability = []
-    tolerances: dict[str, float] = {}
-    grouped_by_kind: dict[str, list[list[tuple[int, float]]]] = {"normal": [], "probe_delta": []}
-    for (kind, identity, pixel), values in sorted(groups.items()):
-        central = max(distance for distance, _ in values); central_scores = sorted(score for distance, score in values if distance == central)
-        if len(central_scores) < 2: raise ValueError("central repeatability observations required")
-        spread = central_scores[-1] - central_scores[0]
-        repeatability.append({"kind": kind, "image_identity": identity, "pixel": list(pixel), "central_distance": central, "scores": central_scores, "spread": spread})
-        tolerances[kind] = max(tolerances.get(kind, 0.0), spread); grouped_by_kind[kind].append(values)
-    candidates: dict[str, int] = {}
-    for kind, kind_groups in grouped_by_kind.items():
-        for distance in sorted({d for values in kind_groups for d, _ in values}):
-            if all(sum(d >= distance for d, _ in values) >= 2 and max(score for d, score in values if d >= distance) - min(score for d, score in values if d >= distance) <= tolerances[kind] for values in kind_groups):
-                candidates[kind] = ceil(distance / PDN_STRIDE) * PDN_STRIDE; break
-        if kind not in candidates: raise ValueError("no validation-only border-distance plateau")
-    border = max(LOCAL_CANDIDATE["invalid_border"][0], *candidates.values())
-    if not 0 <= 2 * border < 256: raise ValueError("empirical border cannot form a 256px tile plan")
-    stride, overlap = 256 - 2 * border, 2 * border
-    evidence = {"repeatability": repeatability, "plateau_candidates": candidates}
-    return {"tile": (256, 256), "invalid_border": (border, border), "stride": (stride, stride), "overlap": (overlap, overlap),
-            "empirical_border": border, "per_kind_border": candidates, "per_kind_tolerance": tolerances,
-            "repeatability_evidence": evidence, "repeatability_evidence_sha256": sha256(_canonical(evidence)).hexdigest(),
-            "claim": NO_EXTERNAL_MINIMUM_AVAILABLE}
+        if set(row)!=allowed: raise ValueError("test/OOD/metadata forbidden")
+        identity,pixel,origin,tile,kind=row["image_identity"],row["pixel"],row["origin"],row["tile_shape"],row["kind"]
+        parts=identity.split("/") if isinstance(identity,str) else []
+        if (identity not in approved or parts[:2]!=["validation","good"] or len(parts)!=3 or any(part in {"",".",".."} for part in parts) or any(part.casefold() in {"test","ood","private"} for part in parts) or tuple(tile)!=(256,256) or kind not in {"normal","probe_delta"} or row["family"] not in {"impulse","seam_crossing_line"} or not isinstance(row["case"],str) or row["polarity"] not in {"black_endpoint","white_endpoint"} or not all(isinstance(v,int) for v in (*pixel,*origin)) or not isfinite(row["score"])): raise ValueError("invalid validation observation")
+        local=(pixel[0]-origin[0],pixel[1]-origin[1])
+        if not 0<=local[0]<256 or not 0<=local[1]<256: raise ValueError("pixel is outside tile origin")
+        key=(kind,identity,tuple(pixel),row["family"],row["case"],row["polarity"]); groups.setdefault(key,{}).setdefault(tuple(origin),[]).append((min(local[0],local[1],255-local[0],255-local[1]),float(row["score"])))
+    if not groups or {key[0] for key in groups}!={"normal","probe_delta"}: raise ValueError("normal and probe_delta evidence required")
+    evidence=[]; kind_borders={"normal":[],"probe_delta":[]}
+    for key,origins in sorted(groups.items()):
+        repeats=[]
+        for origin,values in origins.items():
+            if len(values)!=2: raise ValueError("exactly two same-origin repeats required")
+            distance=values[0][0]
+            if values[1][0]!=distance: raise ValueError("same-origin local distance mismatch")
+            repeats.append((distance,abs(values[1][1]-values[0][1]),origin))
+        eligible=[item for item in repeats if item[0]>=LOCAL_CANDIDATE["invalid_border"][0]]
+        if not eligible: continue  # outer-border anchors cannot select a zero border.
+        tolerance=max(item[1] for item in eligible)
+        # Start candidates at the PDN lower bound; the first observed stable distance bin
+        # is the earliest claim supported by this group, rather than an outer-border zero shortcut.
+        candidate=(min(item[0] for item in eligible)//PDN_STRIDE)*PDN_STRIDE
+        candidate=max(LOCAL_CANDIDATE["invalid_border"][0],candidate)
+        if not all(item[1]<=tolerance for item in eligible): raise ValueError("no validation-only border-distance plateau")
+        kind_borders[key[0]].append(candidate);evidence.append({"kind":key[0],"image_identity":key[1],"pixel":list(key[2]),"family":key[3],"case":key[4],"polarity":key[5],"tolerance":tolerance,"candidate":candidate,"same_origin_repeats":[{"distance":d,"spread":spread,"origin":list(origin)} for d,spread,origin in repeats]})
+    if not all(kind_borders.values()): raise ValueError("no eligible group-local border evidence")
+    candidates={kind:max(values) for kind,values in kind_borders.items()}; border=max(LOCAL_CANDIDATE["invalid_border"][0],*candidates.values())
+    if not 0<=2*border<256: raise ValueError("empirical border cannot form a 256px tile plan")
+    evidence_payload={"groups":evidence,"plateau_candidates":candidates}; return {"tile":(256,256),"invalid_border":(border,border),"stride":(256-2*border,256-2*border),"overlap":(2*border,2*border),"empirical_border":border,"per_kind_border":candidates,"repeatability_evidence":evidence_payload,"repeatability_evidence_sha256":sha256(_canonical(evidence_payload)).hexdigest(),"claim":NO_EXTERNAL_MINIMUM_AVAILABLE}

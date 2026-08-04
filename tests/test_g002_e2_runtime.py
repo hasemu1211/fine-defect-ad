@@ -1,0 +1,169 @@
+from contextlib import nullcontext
+from hashlib import sha256
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from dataclasses import replace
+import json
+import numpy as np
+import pytest
+from PIL import Image
+
+from fine_defect_ad.g002_e2_runtime import (COMMAND, INITIAL_BORDER, TILE, _apply_probe, collect_e2, decode_rgb01, per_origin_probe_evidence, select_e1_or_e2, stream_tiled_map, summarize_probe_cases)
+from fine_defect_ad.g002_evaluate import AdmittedCheckpoint, persist_e2_maps
+from fine_defect_ad.storage import PreflightProof, READY
+
+class Tensor:
+ def __init__(self,value): self.value=value
+ @property
+ def shape(self): return self.value.shape
+ def unsqueeze(self,dim): return Tensor(np.expand_dims(self.value,dim))
+ def to(self,_): return self
+class Torch:
+ @staticmethod
+ def from_numpy(x): return Tensor(x)
+
+def admitted(root,size=(480,480)):
+ leaf=root/'sheet_metal'/'validation'/'good';leaf.mkdir(parents=True);rows=[]
+ for i in range(19):
+  p=leaf/f'{i:02}.png';Image.fromarray(np.full((*size,3),i,dtype=np.uint8)).save(p);rows.append((f'validation/good/{p.name}',sha256(p.read_bytes()).hexdigest()))
+ return AdmittedCheckpoint(root/'x.ckpt','c','s','m','a','i','p','run',root,tuple(rows))
+
+def mapper(tile):
+ assert tile.shape==(1,3,TILE,TILE); score=tile.value[0].mean(axis=0); return score[None,None],(score+.25)[None,None]
+
+def test_streaming_tiling_covers_edges_and_uses_one_exact_tile():
+ raw,plan,boxes,lo,hi,seam=stream_tiled_map(np.zeros((480,480,3),np.float32),mapper,Torch,border=INITIAL_BORDER)
+ assert raw.shape==(480,480) and raw.dtype.str=='<f4' and plan.stride==(224,224) and lo>=1 and hi>=lo and len(boxes)==4 and seam==0
+
+def test_endpoint_probe_and_decode():
+ x=np.asarray([[[.1,.5,.9]]],np.float32);assert _apply_probe(x,{'point':[0,0]},'black_endpoint').tolist()==[[[0.,0.,0.]]]
+ with TemporaryDirectory() as d:
+  p=Path(d)/'x.png';Image.fromarray(np.zeros((2,2),np.uint8)).save(p);assert decode_rgb01(p).shape==(2,2,3)
+
+def test_per_origin_runs_four_forwards_per_origin_both_families_and_polarities():
+ calls=[]
+ def counted(tile): calls.append(tile.shape);return mapper(tile)
+ rgb=np.zeros((480,480,3),np.float32); evidence=per_origin_probe_evidence(rgb,counted,Torch,identity='validation/good/a.png',source_sha256='a'*64,border=16)
+ assert {r['family'] for r in evidence['records']}=={'impulse','seam_crossing_line'} and {r['polarity'] for r in evidence['records']}=={'black_endpoint','white_endpoint'}
+ assert len(calls)==4*sum(1 for _ in evidence['records']) # every retained origin record is exactly four calls
+ assert all('cross_origin_normal_disagreement' in r and 'cross_origin_response_disagreement' in r for r in evidence['records']) and len(evidence['output_sha256'])==64
+
+def test_collect_writes_map_immediately_and_retains_no_raw_corpus():
+ with TemporaryDirectory() as d:
+  written=[]
+  record=collect_e2(admitted(Path(d)),mapper,Torch,map_sink=lambda row: written.append(row['_bytes']) or {'path':'sink'})
+ assert len(written)==19 and all('_bytes' not in row for row in record['maps']) and len(record['probe_summary']['cases'])>0
+
+def measured(cases,delta=0):
+ updated=[]
+ for c in cases:
+  value=dict(c);value.setdefault('normal_repeatability',0.);value.setdefault('response_repeatability',.1);value.setdefault('cross_origin_normal_disagreement',0.);value.setdefault('cross_origin_response_disagreement',0.);value.setdefault('recipe_sha256','r'*64);value.setdefault('probe_content_sha256','p'*64);value['response_interval']=[c['response_interval'][0]+delta,c['response_interval'][1]+delta];updated.append(value)
+ maps=[{'image_identity':f'validation/good/{i}.png','map_sha256':'a'*64,'coverage_min':1} for i in range(19)]
+ return {'maps':maps,'cases':updated,'latency_seconds':1.0,'vram':{'allocated_bytes':1,'reserved_bytes':2}}
+
+def test_selection_is_measured_hierarchical_positive_tie_and_prohibited_inputs():
+ rows=[]
+ for family in ('impulse','seam_crossing_line'):
+  rows.append({'image_identity':'validation/good/a.png','family':family,'case':family,'polarity':'black_endpoint','response_interval':[1.,1.], 'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64})
+ base=measured(rows); improved=measured(rows,1.)
+ assert select_e1_or_e2(e1=base,e2=improved)['selected']=='E2'
+ assert select_e1_or_e2(e1=base,e2=base)['selected']=='E1'
+ with pytest.raises(ValueError):select_e1_or_e2(e1={**base,'test':1},e2=base)
+
+def test_e2_persistence_requires_exact_admitted_ids_and_rejects_duplicate_tamper():
+ with TemporaryDirectory() as d:
+  root=Path(d);gate=admitted(root,size=(256,256)); rows=[]
+  for identity,source in gate.validation_identities:
+   raw=identity.encode(); rows.append({'image_identity':identity,'source_sha256':source,'map_sha256':sha256(raw).hexdigest(),'dtype':'<f4','shape':[1,1],'byte_order':'<','_bytes':raw})
+  checkpoint={key:getattr(gate,key) for key in ('checkpoint_sha256','sidecar_sha256','metrics_sha256','final_attempt_sha256','identity_sha256','pilot_sha256')}
+  collected={'status':'E2_RAW_MAPS_ONLY','maps':rows,'checkpoint':checkpoint,'transform_identity':{},'geometry':{},'claim':'NO_EXTERNAL_MINIMUM_AVAILABLE'}
+  proof=PreflightProof('e2',{'artifact':str(root)},'x','2000-01-01T00:00:00+00:00',{},[],{})
+  def write(path,payload,**_):Path(path).write_bytes(payload);return {'status':READY}
+  got=persist_e2_maps(collected,root,'e2',gate,admit=lambda **_:proof,writer=write);assert 'g002-e2-' in got['manifest']
+  collected['maps'][1]=collected['maps'][0]
+  with pytest.raises(ValueError):persist_e2_maps(collected,root,'e3',gate,admit=lambda **_:proof,writer=write)
+
+def test_e2_ready_integration_uses_e2_lease_command_and_writes_each_map():
+ from fine_defect_ad.g002_eval_runtime import EvaluationArgs
+ from fine_defect_ad.g002_e2_runtime import run_e2_evaluation
+ import fine_defect_ad.g002_evaluate as admission_module
+ with TemporaryDirectory() as d:
+  root=Path(d); gate=admitted(root,size=(256,256)); checkpoint=root/'g002-last-run-0.ckpt';checkpoint.write_bytes(b'x');gate=replace(gate,path=checkpoint,checkpoint_sha256=sha256(checkpoint.read_bytes()).hexdigest());sidecar=checkpoint.with_suffix('.ckpt.json');sidecar.write_text('{}');metrics=root/'g002-metrics-run.json';metrics.write_text('[]');final=root/'g002-attempt-run-x.json';final.write_text('{}')
+  identity={'data':{'validation':[{'path':p,'sha256':h} for p,h in gate.validation_identities]}}; raw=json.dumps(identity,sort_keys=True,separators=(',',':')).encode();ip=root/f'g002-training-identity-run-{sha256(raw).hexdigest()}.json';ip.write_bytes(raw)
+  class LiveTorch:
+   class serialization:
+    @staticmethod
+    def safe_globals(_):return nullcontext()
+   class cuda:
+    @staticmethod
+    def is_available():return True
+    @staticmethod
+    def max_memory_allocated():return 10
+    @staticmethod
+    def max_memory_reserved():return 20
+   @staticmethod
+   def load(*_,**__):return {'state_dict':{},'global_step':70000}
+   @staticmethod
+   def device(_):return 'cuda:0'
+   @staticmethod
+   def from_numpy(x):return Tensor(x)
+   @staticmethod
+   def inference_mode():return nullcontext()
+  class Lease:
+   def __init__(self,*_):pass
+   def __enter__(self):return self
+   def __exit__(self,*_):return False
+  class Model:
+   class Inner:
+    def get_maps(self,tile,*,normalize):assert normalize is False;return mapper(tile)
+   model=Inner()
+   def load_state_dict(self,_):pass
+   def eval(self):return self
+   def to(self,_):return self
+  proof=PreflightProof('e2',{'artifact':str(root)},'x','2000-01-01T00:00:00+00:00',{},[],{})
+  def write(path,payload,**_):Path(path).write_bytes(payload);return {'status':READY}
+  original=admission_module.admit_completed_checkpoint;admission_module.admit_completed_checkpoint=lambda *_:gate
+  try:
+   got=run_e2_evaluation(EvaluationArgs(root,checkpoint,sidecar,metrics,final,ip,root,root/'teacher',root/'imagenette','e2',root/'leases'),runtime_factory=lambda *_,**__:(Model(),None,None,None),lease_factory=Lease,torch_module=LiveTorch,admit=lambda **_:proof,writer=write,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'e2','command':COMMAND,'timestamp':'2026-01-01T00:00:00+00:00'},{'state':'released','run_id':'e2','command':COMMAND,'timestamp':'2026-01-01T00:00:01+00:00','outcome':'normal'}])
+  finally:admission_module.admit_completed_checkpoint=original
+  assert got['status']==READY, got['limitations']
+  assert got['lease_events'][-1]['outcome']=='normal' and len(got['raw_maps']['map_paths'])==19
+
+def test_one_revision_preserves_initial_and_never_third(monkeypatch):
+ import fine_defect_ad.g002_e2_runtime as module
+ calls=[]; notices=[]
+ def fake(*_,border,**__):
+  calls.append(border);return {'geometry':{'empirical_border':24 if len(calls)==1 else 28},'maps':[],'probe_summary':{}}
+ monkeypatch.setattr(module,'collect_e2',fake)
+ got=module.collect_e2_with_one_revision(object(),None,None,map_sink=lambda _:None,initial_failure_sink=notices.append)
+ assert calls==[16,24] and len(notices)==1 and got['revision']['status']=='REVISION_UNSTABLE_RETAIN_E1'
+
+def test_freeze_binds_identity_checkpoint_hardware_and_blocks_test_terms():
+ from fine_defect_ad.g002_e2_runtime import freeze_pretest_selection
+ with TemporaryDirectory() as d:
+  gate=admitted(Path(d),size=(256,256));cases=[]
+  for family in ('impulse','seam_crossing_line'):cases.append({'image_identity':'validation/good/a.png','family':family,'case':family,'polarity':'black_endpoint','response_interval':[1.,1.],'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64})
+  value=measured(cases);value['probe_recipe_sha256']='r'*64
+  frozen=freeze_pretest_selection(e1=value,e2=value,admitted=gate,hardware={'allocated_bytes':1,'reserved_bytes':2})
+  assert frozen['selection']['selected']=='E1' and len(frozen['validation_identities'])==19 and len(frozen['freeze_sha256'])==64
+
+def test_module_has_one_public_selection_and_collection_definition():
+ import ast
+ import importlib
+ source=Path(importlib.import_module('fine_defect_ad.g002_e2_runtime').__file__).read_text()
+ names=[node.name for node in ast.parse(source).body if isinstance(node,ast.FunctionDef)]
+ assert names.count('collect_e2')==1 and names.count('select_e1_or_e2')==1
+
+def test_cli_help_is_available():
+ import subprocess,sys,os
+ got=subprocess.run([sys.executable,'-m','fine_defect_ad.g002_e2_runtime','--help'],env={**os.environ,'PYTHONPATH':f'{Path.cwd()/"src"}:{Path.cwd()/".internal/venv/r1-overlay"}'},text=True,capture_output=True)
+ assert got.returncode==0 and '--training-identity' in got.stdout
+
+def test_freeze_summary_hash_tamper_is_rejected():
+ from fine_defect_ad.g002_e2_runtime import freeze_pretest_selection,verify_pretest_freeze
+ with TemporaryDirectory() as d:
+  gate=admitted(Path(d),size=(256,256)); cases=[]
+  for family in ('impulse','seam_crossing_line'): cases.append({'image_identity':'validation/good/a.png','family':family,'case':family,'polarity':'black_endpoint','response_interval':[1.,1.],'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64})
+  value=measured(cases); value['geometry']={'empirical_border':16};value['revision']={'e2_eligible':True}; frozen=freeze_pretest_selection(e1=value,e2=value,admitted=gate,hardware={'gpu':'fake'})
+  frozen['e2_measurement']['cases'][0]['response_interval'][0]=9.
+  with pytest.raises(ValueError):verify_pretest_freeze(frozen)

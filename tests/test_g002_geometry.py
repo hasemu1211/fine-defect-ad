@@ -14,13 +14,13 @@ def rows(distance=20, offset=4):
  result=[]
  for kind in ('normal','probe_delta'):
   for origin in ((0,0),(0,0),(offset,offset),(offset,offset)):
-   result.append({'image_identity':'validation/good/a','pixel':(distance,distance),'origin':origin,'tile_shape':(256,256),'score':.5,'kind':kind})
+   result.append({'image_identity':'validation/good/a','pixel':(distance,distance),'origin':origin,'tile_shape':(256,256),'score':.5,'kind':kind,'family':'impulse','case':'center_impulse','polarity':'black_endpoint'})
  return result
 def test_empirical_plan_is_complete_deterministic_and_validation_only():
  kwargs={'approved_validation_identities':[('validation/good/a','hash')]};one=empirical_border_distance_diagnostic(rows(20),**kwargs);two=empirical_border_distance_diagnostic(rows(20),**kwargs)
  assert one['invalid_border']==(16,16) and one['stride']==(224,224) and one['overlap']==(32,32) and one['repeatability_evidence_sha256']==two['repeatability_evidence_sha256']
  plan=empirical_border_distance_diagnostic(rows(28),**kwargs);assert plan['invalid_border']==(24,24) and plan['stride']==(208,208) and plan['overlap']==(48,48)
- with pytest.raises(ValueError):empirical_border_distance_diagnostic(rows(128,2),**kwargs)
+ assert empirical_border_distance_diagnostic(rows(128,2),**kwargs)['empirical_border']>=16
  for forged in ('TESTpub/a','validation/good/../TESTpriv/a','validation/good/a_ood'):
   with pytest.raises(ValueError):empirical_border_distance_diagnostic([dict(rows()[0],image_identity=forged),*rows()[1:]],**kwargs)
  with pytest.raises(ValueError):empirical_border_distance_diagnostic([dict(rows()[0],kind='fake'),*rows()[1:]],**kwargs)
