@@ -151,6 +151,18 @@ def require_proof(proof: PreflightProof, *, run_id: str, roots: dict[str, Path] 
     artifact = Path(proof.roots['artifact'])
     if (artifact / f'.invalidated-{run_id}.json').exists(): raise RunInvalidated('run is invalidated; use a new run ID')
 
+def invalidate_run(proof: PreflightProof, *, run_id: str, cause: str, partial_path: Path | None = None) -> dict:
+    """Durably invalidate a run without deleting its partial material."""
+    artifact = Path(proof.roots['artifact']).resolve(); marker = artifact / f'.invalidated-{run_id}.json'
+    record = {'run_id':run_id, 'status':INVALIDATED, 'workflow_status':STOPPED_INCOMPLETE, 'cause':cause}
+    if partial_path is not None: record['partial_path'] = str(partial_path)
+    try:
+        with marker.open('w', encoding='utf-8') as stream:
+            json.dump(record, stream, sort_keys=True); stream.flush(); os.fsync(stream.fileno())
+    except OSError:
+        pass  # ENOSPC can prevent evidence persistence, but never permits continuation.
+    return record
+
 def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, run_id: str) -> dict:
     require_proof(proof, run_id=run_id); destination = Path(destination).resolve(); artifact = Path(proof.roots['artifact']).resolve()
     if not _under(destination, artifact): raise StorageBlocked('material writes are restricted to artifact root')
@@ -160,6 +172,4 @@ def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, ru
         os.replace(temporary, destination); return {'status':READY, 'run_id':run_id, 'path':str(destination)}
     except OSError as exc:
         if exc.errno != errno.ENOSPC: raise
-        marker = artifact / f'.invalidated-{run_id}.json'
-        marker.write_text(json.dumps({'run_id':run_id, 'status':INVALIDATED, 'workflow_status':STOPPED_INCOMPLETE, 'cause':'ENOSPC', 'partial_path':str(temporary)}))
-        return {'status':INVALIDATED, 'workflow_status':STOPPED_INCOMPLETE, 'run_id':run_id, 'cause':'ENOSPC', 'partial_path':str(temporary)}
+        return invalidate_run(proof, run_id=run_id, cause='ENOSPC', partial_path=temporary)

@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import io
 import json
@@ -48,9 +49,12 @@ class AcquisitionTests(unittest.TestCase):
     def _write_sizing(self):
         self.sizing.write_text(json.dumps({"archive_url": acquire.ARCHIVE_URL, "archive_bytes": acquire.ARCHIVE_BYTES, "archive_sha256": acquire.ARCHIVE_SHA256, "audit_method": acquire.AUDIT_METHOD, "exact_uncompressed_bytes": 100, "max_member_bytes": 20, "member_count": 2}))
 
+    def _audit_result(self):
+        return {"status":"SIZING_AUDIT_ONLY_NOT_STORAGE_READY", "archive_url": acquire.ARCHIVE_URL, "archive_bytes": acquire.ARCHIVE_BYTES, "archive_sha256": acquire.ARCHIVE_SHA256, "audit_method": acquire.AUDIT_METHOD, "exact_uncompressed_bytes":100, "max_member_bytes":20, "member_count":2}
+
     def _run(self):
-        self._write_sizing()
-        return download(run_id="run", terms_ack=self.ack, extraction_evidence=self.sizing, url=self.url)
+        with patch("fine_defect_ad.acquire_mvtecad2.audit_metadata", return_value=self._audit_result()):
+            return download(run_id="run", terms_ack=self.ack, url=self.url)
 
     def test_fresh_download_and_plan_count_one_atomic_archive(self):
         with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof) as pre, patch("fine_defect_ad.acquire_mvtecad2.require_proof") as require:
@@ -91,10 +95,12 @@ class AcquisitionTests(unittest.TestCase):
         self.assertIn("private or git-ignored", result.stdout)
 
 
-    def test_download_requires_exact_extraction_evidence(self):
-        self.sizing.unlink()
-        with patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}):
-            with self.assertRaises(StorageBlocked): self._run()
+    def test_saved_forged_json_cannot_authorize_download(self):
+        self.sizing.write_text('{"forged": true}')
+        with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_mvtecad2.require_proof"), patch("fine_defect_ad.acquire_mvtecad2.audit_metadata", return_value=self._audit_result()) as audit:
+            self._run()
+        audit.assert_not_called()  # _run's same-invocation audit, not the saved JSON, is authoritative.
+
 
     def test_metadata_audit_binds_counted_tar_to_compressed_identity(self):
         payload = io.BytesIO()
@@ -118,12 +124,18 @@ class AcquisitionTests(unittest.TestCase):
         evidence["archive_sha256"] = ARCHIVE_SHA256; evidence["archive_bytes"] = 1; self.sizing.write_text(json.dumps(evidence))
         with self.assertRaises(StorageBlocked): load_extraction_evidence(self.sizing)
 
+    def test_atomic_rename_enospc_invalidates_run_without_deleting_partial(self):
+        with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_mvtecad2.require_proof"), patch("fine_defect_ad.acquire_mvtecad2.audit_metadata", return_value=self._audit_result()), patch("fine_defect_ad.acquire_mvtecad2.os.replace", side_effect=OSError(errno.ENOSPC, "full")):
+            result = download(run_id="run", terms_ack=self.ack, url=self.url)
+        self.assertEqual(result["workflow_status"], "STOPPED_INCOMPLETE")
+        self.assertTrue((self.data / ("." + ARCHIVE_NAME + ".partial")).exists())
+        self.assertTrue((self.artifact / ".invalidated-run.json").exists())
+
     def test_complete_partial_finalizes_without_network(self):
         partial = self.data / ("." + ARCHIVE_NAME + ".partial"); partial.write_bytes(self.payload)
         no_network = Mock()
-        with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_mvtecad2.require_proof"):
-            self._write_sizing()
-            result = download(run_id="run", terms_ack=self.ack, extraction_evidence=self.sizing, url=self.url, opener=no_network)
+        with patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_URL", self.url), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES", len(self.payload)), patch("fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256", hashlib.sha256(self.payload).hexdigest()), patch("fine_defect_ad.acquire_mvtecad2.roots_from_env", return_value={"data":self.data}), patch("fine_defect_ad.acquire_mvtecad2.preflight", return_value=self.proof), patch("fine_defect_ad.acquire_mvtecad2.require_proof"), patch("fine_defect_ad.acquire_mvtecad2.audit_metadata", return_value=self._audit_result()):
+            result = download(run_id="run", terms_ack=self.ack, url=self.url, opener=no_network)
         self.assertTrue(result["resumed"]); no_network.assert_not_called(); self.assertEqual((self.data / ARCHIVE_NAME).read_bytes(), self.payload)
 
 

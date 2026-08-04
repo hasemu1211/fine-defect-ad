@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .storage import Allocation, INVALIDATED, READY, STOPPED_INCOMPLETE, StorageBlocked, preflight, require_proof, roots_from_env
+from .storage import Allocation, READY, STOPPED_INCOMPLETE, StorageBlocked, invalidate_run, preflight, require_proof, roots_from_env
 
 ARCHIVE_NAME = "mvtec_ad_2.tar.gz"
 ARCHIVE_BYTES = 32_739_596_982
@@ -180,18 +180,14 @@ def _content_range(response, start: int) -> None:
 
 
 def _stop_enospc(proof, run_id: str, partial: Path) -> dict:
-    artifact = Path(proof.roots["artifact"]).resolve()
-    marker = artifact / f".invalidated-{run_id}.json"
-    marker.write_text(json.dumps({"run_id": run_id, "status": INVALIDATED, "workflow_status": STOPPED_INCOMPLETE, "cause": "ENOSPC", "partial_path": str(partial)}), encoding="utf-8")
-    return {"status": INVALIDATED, "workflow_status": STOPPED_INCOMPLETE, "run_id": run_id, "cause": "ENOSPC"}
+    return invalidate_run(proof, run_id=run_id, cause="ENOSPC", partial_path=partial)
 
-
-def download(*, run_id: str, terms_ack: Path, extraction_evidence: Path, destination: Path | None = None, url: str = ARCHIVE_URL, opener: Callable = urllib.request.urlopen) -> dict:
+def download(*, run_id: str, terms_ack: Path, destination: Path | None = None, url: str = ARCHIVE_URL, opener: Callable = urllib.request.urlopen) -> dict:
     """Download only after terms, exact extraction sizing, and a fresh storage proof."""
     load_terms_ack(terms_ack)
-    sizing = load_extraction_evidence(extraction_evidence)
     if url != ARCHIVE_URL:
         raise StorageBlocked("archive URL must match pinned anomalib provenance")
+    sizing = audit_metadata(terms_ack=terms_ack, url=url, opener=opener)
     roots = roots_from_env()
     final = (Path(destination) if destination else roots["data"] / ARCHIVE_NAME).expanduser().resolve()
     if not _under(final, roots["data"]):
@@ -208,7 +204,10 @@ def download(*, run_id: str, terms_ack: Path, extraction_evidence: Path, destina
         if digest.hexdigest() != ARCHIVE_SHA256:
             raise StorageBlocked("complete partial archive hash mismatch; partial preserved")
         require_proof(proof, run_id=run_id)
-        os.replace(partial, final)
+        try: os.replace(partial, final)
+        except OSError as exc:
+            if exc.errno == errno.ENOSPC: return _stop_enospc(proof, run_id, partial)
+            raise
         return {"status": READY, "run_id": run_id, "path": str(final), "sha256": ARCHIVE_SHA256, "resumed": True}
     headers = {"Range": f"bytes={offset}-"} if offset else {}
     try:
@@ -231,25 +230,27 @@ def download(*, run_id: str, terms_ack: Path, extraction_evidence: Path, destina
         raise
     if partial.stat().st_size != ARCHIVE_BYTES or digest.hexdigest() != ARCHIVE_SHA256:
         raise StorageBlocked("downloaded archive hash or size mismatch; partial preserved")
-    os.replace(partial, final)
+    try: os.replace(partial, final)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC: return _stop_enospc(proof, run_id, partial)
+        raise
     return {"status": READY, "run_id": run_id, "path": str(final), "sha256": ARCHIVE_SHA256}
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True); parser.add_argument("--terms-ack", type=Path)
-    parser.add_argument("--destination", type=Path); parser.add_argument("--extraction-evidence", type=Path)
+    parser.add_argument("--destination", type=Path)
     parser.add_argument("--plan", action="store_true"); parser.add_argument("--metadata-audit", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.plan:
-            plan = acquisition_plan(args.run_id, load_extraction_evidence(args.extraction_evidence)) if args.extraction_evidence else archive_plan(args.run_id)
+            plan = archive_plan(args.run_id)
             print(json.dumps(plan, sort_keys=True)); return 0
         if not args.terms_ack: raise StorageBlocked("--terms-ack is required")
         load_terms_ack(args.terms_ack)
         if args.metadata_audit:
             print(json.dumps(audit_metadata(terms_ack=args.terms_ack), sort_keys=True)); return 0
-        if not args.extraction_evidence: raise StorageBlocked("--extraction-evidence is required before download")
-        print(json.dumps(download(run_id=args.run_id, terms_ack=args.terms_ack, extraction_evidence=args.extraction_evidence, destination=args.destination), sort_keys=True)); return 0
+        print(json.dumps(download(run_id=args.run_id, terms_ack=args.terms_ack, destination=args.destination), sort_keys=True)); return 0
     except (OSError, StorageBlocked, urllib.error.URLError) as exc:
         print(json.dumps({"status": "STORAGE_BLOCKED", "workflow_status": STOPPED_INCOMPLETE, "reason": str(exc)})); return 2
 
