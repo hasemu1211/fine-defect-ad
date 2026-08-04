@@ -182,7 +182,8 @@ def run_pilot(*, lease_directory: Path, run_id: str, command: str, train_loader:
                 if evidence.gradient_finite is False:
                     cause = "GRADIENT_NONFINITE"
                     break
-            started = clock(); validate(); evidence.record_validation(clock() - started)
+            if cause is None:
+                started = clock(); validate(); evidence.record_validation(clock() - started)
     except Exception as exc:
         cause = cause or f"RUNNER_EXCEPTION:{type(exc).__name__}"
     evidence.record_lease_events(lease_events(lease_directory, run_id))

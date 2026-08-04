@@ -34,8 +34,6 @@ class PilotTests(unittest.TestCase):
         json.dumps(record, allow_nan=False)
 
 
-if __name__ == "__main__": unittest.main()
-
 class PilotRunnerTests(unittest.TestCase):
     def test_runner_holds_one_lease_for_setup_steps_and_validation(self):
         from pathlib import Path
@@ -52,3 +50,27 @@ class PilotRunnerTests(unittest.TestCase):
         self.assertEqual(record["status"], READY)
         self.assertEqual([event["state"] for event in record["lease_events"]], ["acquired", "released"])
         self.assertTrue(all(event["run_id"] == "lease-run" for event in record["lease_events"]))
+
+
+    def test_nan_skips_validation_but_releases_lease(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from fine_defect_ad.pilot import run_pilot
+
+        validated = []
+        ticks = iter(range(10))
+        with TemporaryDirectory() as raw:
+            record = run_pilot(lease_directory=Path(raw), run_id="nan-run", command="pilot",
+                               train_loader=range(1), setup=lambda: None,
+                               step=lambda: {"gradients_finite": False},
+                               validate=lambda: validated.append(True),
+                               clock=lambda: float(next(ticks)))
+        self.assertEqual(validated, [])
+        self.assertEqual(record["status"], STOPPED_INCOMPLETE)
+        self.assertEqual(record["termination_cause"], "GRADIENT_NONFINITE")
+        self.assertIsNone(record["validation_overhead_seconds"])
+        self.assertEqual(record["lease_events"][-1]["state"], "released")
+
+
+if __name__ == "__main__":
+    unittest.main()
