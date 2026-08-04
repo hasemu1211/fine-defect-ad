@@ -8,5 +8,10 @@
   "comparator_limitation": "No public official source specifies > versus >= at equality.",
   "code_utils_status": "checker_not_evaluator",
   "official_benchmark_claim": "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE",
-  "contact_needed": "Obtain an official evaluator or written comparator confirmation before binarization/audit/benchmark claims."
+  "contact_needed": "Obtain an official evaluator or written comparator confirmation before binarization/audit/benchmark claims.",
+  "future_unlock_requirements": [
+    "repository-pinned official evaluator artifact",
+    "acquired artifact content hash",
+    "executable equality behavior test"
+  ]
 }

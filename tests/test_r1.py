@@ -7,16 +7,14 @@ from fine_defect_ad.r1 import (
     LOW_FPR_CLAIM_STATE, PROTOCOL_BLOCKED_STATE, R1_SEED, R1_SEED_DERIVATION,
     R1_SEED_IDENTITY, R1_SEED_IDENTITY_SHA256, audit_testpub_normal,
     calibrate_raw_threshold, clopper_pearson_upper, freeze_r1_contract,
-    protocol_provenance_status, raw_image_score, threshold_raw_map,
+    raw_image_score, threshold_raw_map,
     validate_efficientad_s_config,
 )
 
 
-PROVENANCE = {"formula_status": "VERIFIED", "formula_source_locator": "MVTec AD 2 paper §4.2.2",
-              "comparator_status": "VERIFIED", "source_locator": "https://example.invalid/protocol",
-              "source_sha256": "0" * 64}
-BLOCKED_COMPARATOR = {"formula_status": "VERIFIED", "formula_source_locator": "MVTec AD 2 paper §4.2.2",
-                      "comparator_status": "UNVERIFIED_PUBLICLY", "comparator": None}
+SELF_ASSERTED_COMPARATOR = {"formula_status": "VERIFIED", "formula_source_locator": "MVTec AD 2 paper §4.2.2",
+                            "comparator_status": "VERIFIED", "comparator": ">",
+                            "source_locator": "https://example.invalid/protocol", "source_sha256": "0" * 64}
 SEED_PROVENANCE = {"status": "VERIFIED", "upstream_seed_status": "ABSENT",
                    "identity": R1_SEED_IDENTITY, "identity_sha256": R1_SEED_IDENTITY_SHA256,
                    "derivation": R1_SEED_DERIVATION, "seed": R1_SEED}
@@ -36,31 +34,22 @@ class R1Tests(unittest.TestCase):
             bad = self.config(); bad[key] = value
             with self.assertRaises(ValueError): validate_efficientad_s_config(bad)
 
-    def test_numeric_threshold_survives_blocked_comparator_but_decisions_fail_closed(self):
+    def test_numeric_threshold_stays_blocked_even_with_self_asserted_comparator(self):
         evidence = json.loads(Path("evidence/mvtec-metric-protocol.json").read_text())
         self.assertEqual(evidence["official_benchmark_claim"], PROTOCOL_BLOCKED_STATE)
-        self.assertEqual(protocol_provenance_status(BLOCKED_COMPARATOR)["claim_state"], PROTOCOL_BLOCKED_STATE)
-        blocked = calibrate_raw_threshold([[1, 2], [3, 4]], BLOCKED_COMPARATOR)
-        self.assertAlmostEqual(blocked.value, 2.5 + 3 * math.sqrt(1.25))
-        with self.assertRaisesRegex(ValueError, "blocked"): threshold_raw_map([[1]], blocked)
-        with self.assertRaisesRegex(ValueError, "blocked"): audit_testpub_normal([[[1]]], blocked, confidence=.95, minimum_normal_samples=1)
-        threshold = calibrate_raw_threshold([[1, 2], [3, 4]], {**PROVENANCE, "comparator": ">"})
+        threshold = calibrate_raw_threshold([[1, 2], [3, 4]], SELF_ASSERTED_COMPARATOR)
         self.assertAlmostEqual(threshold.value, 2.5 + 3 * math.sqrt(1.25))
-        raw = [[1, 7]]; preserved, pixels, image_positive, score = threshold_raw_map(raw, threshold)
-        self.assertIs(preserved, raw); self.assertEqual(pixels, ((False, True),))
-        self.assertEqual(score, raw_image_score(raw)); self.assertTrue(image_positive)
+        self.assertIsNone(threshold.comparator)
+        with self.assertRaisesRegex(ValueError, "blocked"): threshold_raw_map([[1]], threshold)
+        with self.assertRaisesRegex(ValueError, "blocked"): audit_testpub_normal([[[1]]], threshold, confidence=.95, minimum_normal_samples=1)
 
     def test_exact_bounds_and_conservative_public_audit(self):
         self.assertAlmostEqual(clopper_pearson_upper(0, 10, .95), 1 - .05 ** .1)
         self.assertEqual(clopper_pearson_upper(10, 10, .95), 1.0)
         self.assertGreater(clopper_pearson_upper(1, 10, .95), .1)
-        threshold = calibrate_raw_threshold([[0]], {**PROVENANCE, "comparator": ">"})
-        for maps, positives in (([[0]], 0), ([[1]], 1), ([[1], [1]], 2)):
-            audit = audit_testpub_normal(maps, threshold, confidence=.95, minimum_normal_samples=24)
-            self.assertEqual((audit.normal_count, audit.positives), (len(maps), positives))
-            self.assertFalse(audit.sample_size_sufficient)
-            self.assertEqual(audit.claim_state, LOW_FPR_CLAIM_STATE)
-        with self.assertRaises(ValueError): audit_testpub_normal([], threshold, confidence=.95, minimum_normal_samples=24)
+        threshold = calibrate_raw_threshold([[0]], SELF_ASSERTED_COMPARATOR)
+        with self.assertRaisesRegex(ValueError, "blocked"):
+            audit_testpub_normal([[0]], threshold, confidence=.95, minimum_normal_samples=24)
 
     def test_contract_freezes_config_and_excludes_results(self):
         config = self.config(); contract = freeze_r1_contract(config, ["pub-2", "pub-1"])

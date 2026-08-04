@@ -89,35 +89,14 @@ def _valid_seed_provenance(provenance: Mapping[str, Any]) -> bool:
     }
 
 
-def protocol_provenance_status(provenance: Mapping[str, Any]) -> dict[str, str]:
-    """Expose a blocking state instead of inventing an unverified comparator."""
-    required = {"source_locator", "source_sha256"}
-    status = provenance.get("comparator_status", provenance.get("status"))
-    if not required <= set(provenance) or status != "VERIFIED":
-        return {"claim_state": PROTOCOL_BLOCKED_STATE}
-    digest = provenance["source_sha256"]
-    if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
-        return {"claim_state": PROTOCOL_BLOCKED_STATE}
-    return {"claim_state": "VERIFIED"}
-
-
 def _formula_is_verified(provenance: Mapping[str, Any]) -> bool:
     return provenance.get("formula_status") == "VERIFIED" and bool(provenance.get("formula_source_locator"))
-
-
-def _comparator(provenance: Mapping[str, Any]) -> str | None:
-    if protocol_provenance_status(provenance)["claim_state"] != "VERIFIED":
-        return None
-    comparator = provenance.get("comparator")
-    if comparator not in {">", ">="}:
-        raise ValueError("verified provenance comparator must be '>' or '>='")
-    return comparator
 
 
 @dataclass(frozen=True)
 class RawThreshold:
     value: float
-    comparator: str | None
+    comparator: None
     provenance: Mapping[str, Any]
 
     def is_positive(self, score: float) -> bool:
@@ -130,13 +109,12 @@ def calibrate_raw_threshold(validation_maps: Iterable[Any], provenance: Mapping[
     """Calculate one raw pixel threshold (mean + 3 population standard deviations)."""
     if not _formula_is_verified(provenance):
         raise ValueError("raw threshold formula requires verified provenance")
-    comparator = _comparator(provenance)
     scores = [score for raw_map in validation_maps for score in _values(raw_map)]
     if not scores:
         raise ValueError("validation maps cannot be empty")
     mean = math.fsum(scores) / len(scores)
     variance = math.fsum((score - mean) ** 2 for score in scores) / len(scores)
-    return RawThreshold(mean + 3 * math.sqrt(variance), comparator, MappingProxyType(dict(provenance)))
+    return RawThreshold(mean + 3 * math.sqrt(variance), None, MappingProxyType(dict(provenance)))
 
 
 def raw_image_score(raw_map: Any) -> float:
