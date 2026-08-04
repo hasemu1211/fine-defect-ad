@@ -119,8 +119,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
         with GpuLease(args.g002.lease_directory, args.run_id, "g002-training"):
             import torch
             from lightning.pytorch import Callback
-            from lightning.pytorch.callbacks import ModelCheckpoint
-            checkpoint = ModelCheckpoint(dirpath=args.checkpoint_directory, filename="last", save_last=True, save_top_k=0, every_n_train_steps=interval)
+            artifacts = TrainingArtifacts(Path(proof.roots["artifact"]), args.run_id, identity)
             pending = {"signal": None}
             previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
             for sig in previous: signal.signal(sig, lambda signum, frame: pending.update(signal=signum))
@@ -130,20 +129,20 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
                     if pending["signal"]:
-                        trainer.save_checkpoint(str(args.checkpoint_directory / "last.ckpt")); trainer.should_stop = True
+                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
                     _atomic_jsonl(args.metrics_path, {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]),"rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)})
             from .pilot import PilotEvidence
             model, module, trainer, _ = _lazy_runtime(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
-            trainer.callbacks.extend([checkpoint, SafetyMetrics()])
+            trainer.callbacks.append(SafetyMetrics())
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
-            for sig, old in previous.items(): signal.signal(sig, old)
-            last = Path(checkpoint.last_model_path)
-            if not last.is_file() or not args.metrics_path.is_file(): raise RuntimeError("MISSING_VERIFIED_CHECKPOINT_OR_METRICS")
-            last.with_suffix(last.suffix+".json").write_text(json.dumps(resume_sidecar(last,PILOT_SHA256,identity),sort_keys=True))
+            checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
+            metrics_path = artifacts.metrics([])
             if pending["signal"]: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
+            else: artifacts.final({"run_id":args.run_id,"status":READY,"checkpoint_sha256":file_sha256(checkpoint_path),"metrics_sha256":file_sha256(metrics_path),"resume_exactness":"NOT_ESTABLISHED"})
+            for sig, old in previous.items(): signal.signal(sig, old)
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
@@ -156,6 +155,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw = parser.parse_args(argv); g002 = G002Args(raw.dataset_root, raw.teacher_small, raw.imagenette_root, raw.run_id, raw.lease_directory)
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
 if __name__ == "__main__": raise SystemExit(main())
+
+def _checkpoint_bytes(trainer: Any) -> bytes:
+    import io, torch
+    output = io.BytesIO()
+    torch.save({"state_dict": trainer.lightning_module.state_dict(), "global_step": trainer.global_step}, output)
+    return output.getvalue()
+
 
 @dataclass
 class TrainingArtifacts:
