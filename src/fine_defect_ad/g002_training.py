@@ -50,7 +50,7 @@ def require_artifact_child(path: Path, artifact: Path) -> Path:
 
 def derived_write_bound(identity: Mapping[str, Any]) -> tuple[int, str]:
     # Exact serialized identity is the durable sidecar/evidence floor; checkpoint probe is required before READY.
-    size = len(json.dumps(dict(identity), sort_keys=True).encode())
+    size = len(json.dumps(dict(identity), sort_keys=True).encode(), overwrite=False)
     return max(4096, size * 4), "serialized identity sidecar/evidence bytes x4; checkpoint size measured after save"
 
 
@@ -166,16 +166,17 @@ class TrainingArtifacts:
     write: Any = atomic_write
 
     def __post_init__(self) -> None:
+        self._slot = 0
         self.artifact_root = Path(self.artifact_root).resolve()
         self.identity_hash = sha256(json.dumps(dict(self.identity), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
-    def _commit(self, name: str, payload: bytes) -> Path:
+    def _commit(self, name: str, payload: bytes, *, overwrite: bool = True) -> Path:
         path = require_artifact_child(self.artifact_root / name, self.artifact_root)
         source = f"exact in-memory {name} bytes={len(payload)} sha256={sha256(payload).hexdigest()}"
         proof = self.admit(run_id=self.run_id, allocations=[Allocation("artifact", len(payload), "persistent", source, "g002-training-artifact-final"), Allocation("artifact", len(payload), "transient", source, "g002-training-artifact-incoming")], reserve_bytes=len(payload), reserve_evidence={"max_pending_atomic_write_bytes":len(payload),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
         if Path(proof.roots["artifact"]).resolve() != self.artifact_root:
             raise TrainingBlocked("fresh proof artifact root changed")
-        result = self.write(path, payload, proof=proof, run_id=self.run_id, overwrite=False)
+        result = self.write(path, payload, proof=proof, run_id=self.run_id, overwrite=overwrite)
         if result.get("status") != READY or not path.is_file() or file_sha256(path) != sha256(payload).hexdigest():
             raise TrainingBlocked("artifact commit verification failed")
         return path
@@ -184,11 +185,14 @@ class TrainingArtifacts:
         if not 0 <= step <= MAX_STEPS: raise TrainingBlocked("checkpoint step invalid")
         payload = serialize_checkpoint()
         if not isinstance(payload, bytes) or not payload: raise TrainingBlocked("checkpoint serializer returned no bytes")
-        checkpoint = self._commit(f"g002-last-{self.run_id}-{step % 2}.ckpt", payload)
+        slot = self._slot % 2
+        checkpoint = self._commit(f"g002-last-{self.run_id}-{slot}.ckpt", payload)
         sidecar = {"checkpoint_sha256": sha256(payload).hexdigest(), "identity_sha256": self.identity_hash,
                    "pilot_sha256": PILOT_SHA256, "global_step": step, "lineage": self.run_id,
-                   "resume_exactness": "NOT_ESTABLISHED"}
-        return checkpoint, self._commit(f"g002-last-{self.run_id}.ckpt.json", json.dumps(sidecar,sort_keys=True).encode())
+                   "resume_exactness": "NOT_ESTABLISHED", "checkpoint_name": checkpoint.name}
+        result = checkpoint, self._commit(f"g002-last-{self.run_id}-{slot}.ckpt.json", json.dumps(sidecar,sort_keys=True).encode())
+        self._slot += 1
+        return result
 
     def metrics(self, rows: Sequence[Mapping[str, Any]]) -> Path:
         if len(rows) > 511: raise TrainingBlocked("metrics snapshot exceeds 511 epoch rows")

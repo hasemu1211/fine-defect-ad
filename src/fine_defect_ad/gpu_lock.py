@@ -53,7 +53,7 @@ class GpuLease:
         for sig in (signal.SIGINT, signal.SIGTERM): self._old_signals[sig] = signal.signal(sig, self._signal)
         return self
     def __exit__(self, exc_type, exc, _traceback) -> None:
-        self._release('normal' if exc is None else 'exception')
+        self._release(f'signal:{self.pending_signal}' if self.defer_signals and self.pending_signal else 'normal' if exc is None else 'exception')
         for sig, previous in self._old_signals.items(): signal.signal(sig, previous)
         self._old_signals.clear()
 
