@@ -2,10 +2,9 @@ import json
 import unittest
 
 from fine_defect_ad.pilot import (PILOT_STEPS, READY, STOPPED_INCOMPLETE, PilotEvidence,
-                                  estimate_eta_seconds, pilot_step_budget)
+                                  estimate_eta_seconds, expected_pilot_protocol_metadata, pilot_step_budget)
 
-METADATA = {"anomalib_version": "2.6.0", "anomalib_commit": "abc", "config_hash": "config",
-            "seed_provenance_hash": "seed", "precision": "32"}
+METADATA = expected_pilot_protocol_metadata()
 
 
 class PilotTests(unittest.TestCase):
@@ -87,6 +86,16 @@ class PilotRunnerTests(unittest.TestCase):
             complete.record_step(timestamp=timestamp, gradients_finite=True, host_rss_bytes=1,
                                  gpu_allocated_bytes=1, gpu_reserved_bytes=1)
         self.assertTrue(complete.to_record()["termination_cause"].startswith("PROTOCOL_METADATA_MISSING:"))
+
+    def test_fake_protocol_bindings_cannot_be_ready(self):
+        evidence = PilotEvidence("r", "runner", 1_000, dict(METADATA)); evidence.record_setup(1); evidence.record_validation(1)
+        for timestamp in range(PILOT_STEPS):
+            evidence.record_step(timestamp=timestamp, gradients_finite=True, host_rss_bytes=1,
+                                 gpu_allocated_bytes=1, gpu_reserved_bytes=1)
+        for field in ("anomalib_version", "config_hash", "seed_provenance_hash", "precision"):
+            fake = dict(METADATA); fake[field] = "fake"; evidence.protocol_metadata = fake
+            self.assertEqual(evidence.to_record()["termination_cause"], "PROTOCOL_METADATA_MISMATCH")
+        self.assertEqual(METADATA["precision"], "32-true")
 
     def test_nonfinite_measurement_is_structured_stop(self):
         from pathlib import Path

@@ -5,7 +5,7 @@ Lightning, or anomalib.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
 import math
@@ -14,9 +14,12 @@ import resource
 from pathlib import Path
 import statistics
 import time
+from hashlib import sha256
 from typing import Any, Callable, Mapping
 
 from .gpu_lock import BusyError, GpuLease
+from .r1 import (R1_SEED, R1_SEED_DERIVATION, R1_SEED_IDENTITY, R1_SEED_IDENTITY_SHA256,
+                 validate_efficientad_s_config)
 
 PILOT_STEPS = 1_000
 MAX_STEPS = 70_000
@@ -28,6 +31,23 @@ REQUIRED_PEAK_FIELDS = ("peak_host_rss_bytes", "peak_gpu_allocated_bytes", "peak
 
 class MeasurementError(ValueError):
     """A callback provided no usable measured value."""
+
+
+def expected_pilot_protocol_metadata() -> dict[str, str]:
+    """Bind a pilot to the fixed R1 config and tracked seed provenance artifact."""
+    seed_provenance = {"status": "VERIFIED", "upstream_seed_status": "ABSENT",
+                       "identity": R1_SEED_IDENTITY, "identity_sha256": R1_SEED_IDENTITY_SHA256,
+                       "derivation": R1_SEED_DERIVATION, "seed": R1_SEED}
+    config = validate_efficientad_s_config({
+        "image_size": (256, 256), "batch_size": 1, "model_size": "small", "learning_rate": 1e-4,
+        "weight_decay": 1e-5, "max_steps": MAX_STEPS, "max_epochs": 1_000, "normalization": None,
+        "seeds": (R1_SEED,), "seed_provenance": seed_provenance, "pilot_steps": PILOT_STEPS,
+    })
+    config_hash = sha256(json.dumps(asdict(config), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    provenance_path = Path(__file__).resolve().parents[2] / "evidence" / "r1-seed-provenance.json"
+    return {"anomalib_version": "2.6.0", "anomalib_commit": "3759687e76395c4d6d239552d3bf6d72e003da78",
+            "config_hash": config_hash, "seed_provenance_hash": sha256(provenance_path.read_bytes()).hexdigest(),
+            "precision": "32-true"}
 
 
 def pilot_step_budget(train_loader: object) -> int:
@@ -131,9 +151,9 @@ class PilotEvidence:
     def to_record(self, termination_cause: str | None = None) -> dict[str, Any]:
         cause = termination_cause or self.termination_cause
         completed = len(self.step_timestamps)
-        missing_protocol = [key for key in REQUIRED_PROTOCOL_FIELDS
-                            if not isinstance((self.protocol_metadata or {}).get(key), str)
-                            or not (self.protocol_metadata or {})[key]]
+        expected_metadata = expected_pilot_protocol_metadata()
+        metadata = dict(self.protocol_metadata or {})
+        missing_protocol = [key for key in REQUIRED_PROTOCOL_FIELDS if key not in metadata]
         missing_peaks = [key for key in REQUIRED_PEAK_FIELDS if getattr(self, key) is None]
         if self.gradient_finite is False:
             cause = cause or "GRADIENT_NONFINITE"
@@ -141,6 +161,8 @@ class PilotEvidence:
             cause = cause or f"PILOT_STEPS_{completed}_OF_{PILOT_STEPS}"
         elif missing_protocol:
             cause = cause or "PROTOCOL_METADATA_MISSING:" + ",".join(missing_protocol)
+        elif metadata != expected_metadata:
+            cause = cause or "PROTOCOL_METADATA_MISMATCH"
         elif missing_peaks:
             cause = cause or "REQUIRED_MEASUREMENTS_MISSING:" + ",".join(missing_peaks)
         elif self.setup_overhead_seconds is None or self.validation_overhead_seconds is None:
