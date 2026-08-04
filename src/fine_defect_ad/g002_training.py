@@ -177,7 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = run_training(TrainingArgs(raw.pilot_evidence, raw.run_id, raw.checkpoint_directory, raw.metrics_path, g002, raw.resume_checkpoint)); print(json.dumps(result, sort_keys=True)); return 0 if result["status"] == READY else 2
 
 def trusted_resume_checkpoint_io(checkpoint: Path, expected_sha256: str, artifact_root: Path):
-    """Unsafe pickle is narrowly allowed only for one selected, artifact-root local checkpoint."""
+    """Load one selected artifact-root checkpoint with weights-only safe globals."""
     import torch
     from lightning.fabric.plugins.io.torch_io import TorchCheckpointIO
     selected, root = Path(checkpoint).resolve(), Path(artifact_root).resolve()
