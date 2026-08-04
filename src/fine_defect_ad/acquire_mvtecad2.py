@@ -21,7 +21,7 @@ ARCHIVE_BYTES = 32_739_596_982
 ARCHIVE_SHA256 = "c0ded99ef32bfc8e352d52beb44515e5b292b8598cb963aadfa91ca0763505e4"
 ARCHIVE_URL = "https://www.mydrive.ch/shares/150997/701c90d3aea6588f404936e32a674602/download/466712769-1743429042/mvtec_ad_2.tar.gz"
 ANOMALIB_PROVENANCE = "https://github.com/open-edge-platform/anomalib/blob/3759687e76395c4d6d239552d3bf6d72e003da78/src/anomalib/data/datamodules/image/mvtecad2.py"
-OFFICIAL_FORM_URL = "https://www.mvtec.com/company/research/datasets/mvtec-ad-2/downloads"
+OFFICIAL_FORM_URL = "https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2"
 ACK_FIELDS = {"status", "official_form_url", "license", "noncommercial", "accepted_at"}
 
 
@@ -33,9 +33,21 @@ def _under(child: Path, parent: Path) -> bool:
         return False
 
 
+def _checkout_root() -> Path:
+    """Resolve the checkout from this module, never the caller's directory."""
+    source_root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=source_root, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+    )
+    if result.returncode:
+        raise StorageBlocked("unable to resolve source checkout for terms acknowledgement")
+    return Path(result.stdout.strip()).resolve()
+
+
 def _ack_is_private_or_ignored(path: Path) -> bool:
     """Outside this checkout is private; inside it must be Git-ignored."""
-    root = Path.cwd().resolve()
+    root = _checkout_root()
     if not _under(path, root):
         return True
     return subprocess.run(["git", "check-ignore", "-q", "--", str(path)], cwd=root, check=False).returncode == 0
@@ -56,9 +68,11 @@ def load_terms_ack(path: Path) -> dict:
     ):
         raise StorageBlocked("terms acknowledgement does not match MVTec AD 2 conditions")
     try:
-        datetime.fromisoformat(ack["accepted_at"].replace("Z", "+00:00"))
+        accepted_at = datetime.fromisoformat(ack["accepted_at"].replace("Z", "+00:00"))
+        if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+            raise ValueError("timezone required")
     except (AttributeError, ValueError) as exc:
-        raise StorageBlocked("terms acknowledgement accepted_at is invalid") from exc
+        raise StorageBlocked("terms acknowledgement accepted_at must be timezone-aware") from exc
     return ack
 
 

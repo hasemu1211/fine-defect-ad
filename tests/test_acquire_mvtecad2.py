@@ -1,5 +1,8 @@
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import threading
 import tempfile
 import unittest
@@ -30,7 +33,7 @@ class AcquisitionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); root = Path(self.tmp.name)
         self.data, self.artifact = root / "data", root / "artifact"; self.data.mkdir(); self.artifact.mkdir()
-        self.ack = root / "terms.json"; self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/company/research/datasets/mvtec-ad-2/downloads", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00+00:00"}))
+        self.ack = root / "terms.json"; self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00+00:00"}))
         self.payload = b"tiny-mvtec-archive"; _RangeServer.payload = self.payload; _RangeServer.bad_range = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), _RangeServer); self.thread = threading.Thread(target=self.server.serve_forever); self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}/archive"
@@ -63,10 +66,19 @@ class AcquisitionTests(unittest.TestCase):
             with self.assertRaises(StorageBlocked): self._run()
         self.assertTrue(partial.exists())
 
-    def test_missing_ack_and_pii_ack_are_rejected(self):
+    def test_missing_ack_pii_and_naive_ack_are_rejected(self):
         with self.assertRaises(StorageBlocked): load_terms_ack(self.ack.with_name("missing.json"))
-        self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/company/research/datasets/mvtec-ad-2/downloads", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00+00:00", "name":"no"}))
+        self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00+00:00", "name":"no"}))
         with self.assertRaises(StorageBlocked): load_terms_ack(self.ack)
+        self.ack.write_text(json.dumps({"status":"ACCEPTED", "official_form_url":"https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2", "license":"CC-BY-NC-SA-4.0", "noncommercial":True, "accepted_at":"2026-08-04T00:00:00"}))
+        with self.assertRaises(StorageBlocked): load_terms_ack(self.ack)
+
+    def test_cli_outside_checkout_rejects_tracked_ack_path(self):
+        tracked = Path(__file__).resolve()
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        result = subprocess.run([sys.executable, "-m", "fine_defect_ad.acquire_mvtecad2", "--run-id", "run", "--terms-ack", str(tracked)], cwd=self.tmp.name, env=env, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("private or git-ignored", result.stdout)
 
 
 if __name__ == "__main__": unittest.main()
