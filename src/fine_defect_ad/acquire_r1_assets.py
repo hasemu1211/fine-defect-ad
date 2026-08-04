@@ -102,7 +102,10 @@ def _content_range(response, start: int, total: int) -> None:
 
 def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) -> dict:
     """Download one pinned archive after a fresh full-capacity proof; failures persist."""
-    asset = _asset(name); active = roots or roots_from_env(); raw = _raw_path(active["data"], asset)
+    asset = _asset(name); active = roots or roots_from_env()
+    if "data" not in active or "artifact" not in active:
+        raise StorageBlocked("data and artifact roots are required for acquisition")
+    raw = _raw_path(active["data"], asset)
     if not _under(raw, active["data"]):
         raise StorageBlocked("raw archive must remain under data root")
     if _validate_final(raw, asset):
@@ -116,6 +119,12 @@ def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) ->
         digest, offset = hashlib.sha256(), 0
     if offset > asset["bytes"]:
         raise StorageBlocked("partial archive exceeds pinned length")
+    if offset == asset["bytes"]:
+        if digest != asset["sha256"]:
+            raise StorageBlocked("complete partial archive hash mismatch; partial preserved")
+        require_proof(proof, run_id=run_id, roots=active)
+        os.replace(partial, raw); _fsync_directory(raw.parent)
+        return {"status": READY, "asset": name, "path": str(raw), "sha256": asset["sha256"], "resumed": True}
     request = urllib.request.Request(asset["url"], headers={"Range": f"bytes={offset}-"} if offset else {})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -133,6 +142,11 @@ def download(*, name: str, run_id: str, roots: dict[str, Path] | None = None) ->
                 output.flush(); os.fsync(output.fileno())
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
+            marker = active["artifact"] / f".invalidated-{run_id}.json"
+            with marker.open("w", encoding="utf-8") as stream:
+                json.dump({"run_id": run_id, "status": "INVALIDATED", "workflow_status": STOPPED_INCOMPLETE, "cause": "ENOSPC", "partial_path": str(partial)}, stream, sort_keys=True)
+                stream.flush(); os.fsync(stream.fileno())
+            _fsync_directory(marker.parent)
             return {"status": "INVALIDATED", "workflow_status": STOPPED_INCOMPLETE, "asset": name, "partial_path": str(partial)}
         raise
     if partial.stat().st_size != asset["bytes"] or digest.hexdigest() != asset["sha256"]:
