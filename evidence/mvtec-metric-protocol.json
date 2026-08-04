@@ -1,11 +1,38 @@
 {
   "formula_status": "VERIFIED",
-  "formula_source_locator": "MVTec AD 2 paper, section 4.2.2",
+  "formula_source_locator": "MVTec AD 2 paper §4.2.2; MVTec AD 2 public code utils submission-checker warning",
   "formula": "raw per-pixel validation mean plus 3 population standard deviations",
   "metric": "AU-PRO0.05",
+  "metric_source_locator": "MVTec AD 2 paper §4.2.1; the official MVTec AD evaluator v1.0 accepts pro_integration_limit=0.05",
+  "official_sources": {
+    "mvtec_ad2": {
+      "dataset_page_url": "https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2",
+      "paper_url": "https://arxiv.org/abs/2503.21622",
+      "license": "CC-BY-NC-SA-4.0",
+      "access_caveat": "The dataset page requires its download form and prohibits commercial dataset use; no dataset body is stored or redistributed by this repository."
+    },
+    "mvtec_ad2_public_code_utils": {
+      "archive_url": "https://www.mydrive.ch/shares/121509/40399aba7a28cfc47a7d804553228b25/download/466656866-1743171051/MVTecAD2_public_code_utils.tar.gz",
+      "archive_sha256": "fda9b379affbbde8b4d4fc1fe6ac52aaff981f347f3424e6b6de027457549f15",
+      "official_page_locator": "MVTec AD 2 dataset page, Code Utils for Development",
+      "role": "submission structure/content checker, dataset helper, and runtime/memory snippets; not a public AD 2 metric evaluator",
+      "license_caveat": "The archive carries its own license text. This repository records only source identity and does not redistribute the archive; check the supplied terms before reuse."
+    },
+    "mvtec_ad_evaluator_v1": {
+      "archive_url": "https://www.mydrive.ch/shares/150450/bb24b914a28ddd2b5e35bd53d23177cd/download/439517473-1665675012/mvtec_ad_evaluation.tar.xz",
+      "archive_sha256": "dfcda7d67eee25316ec6ae5042c0b1684a4cabf33b2346be351e2ce36013f220",
+      "official_page_locator": "MVTec AD dataset page, Evaluation Code",
+      "version": "1.0",
+      "local_au_pro_0_05_status": "SOURCE_CONFIRMED_NOT_EXECUTED",
+      "local_au_pro_0_05_basis": "The archive README and CLI expose pro_integration_limit, whose accepted range includes 0.05; the evaluator integrates and normalizes the local PRO curve at that limit.",
+      "scope_limit": "This is an MVTec AD local evaluator. Equivalence to the MVTec AD 2 evaluation server is unverified.",
+      "license_caveat": "The archive carries a BSD-style license notice. This repository records only source identity and does not redistribute the archive."
+    }
+  },
   "comparator_status": "UNVERIFIED_PUBLICLY",
   "comparator": null,
-  "comparator_limitation": "No public official source specifies > versus >= at equality.",
+  "comparator_limitation": "The MVTec AD 2 paper's supplementary wording says a pixel 'exceeds' the threshold, but no public official AD 2 evaluator or equality-behavior test specifies > versus >=. That wording is suggestive, not executable comparator evidence.",
+  "ad2_server_equivalence_status": "UNVERIFIED",
   "code_utils_status": "checker_not_evaluator",
   "official_benchmark_claim": "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE",
   "contact_needed": "Obtain an official evaluator or written comparator confirmation before binarization/audit/benchmark claims.",

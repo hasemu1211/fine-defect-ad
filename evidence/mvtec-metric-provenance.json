@@ -1,0 +1,75 @@
+{
+  "inspection_status": "VERIFIED_EPHEMERAL_RETRIEVAL",
+  "retrieved_at_utc": "2026-08-04T07:54:22Z",
+  "retention_status": "The inspected archives are hash-verified during retrieval only; neither archive nor dataset content is versioned or redistributed by this repository.",
+  "sources": {
+    "mvtec_ad2_public_code_utils": {
+      "official_page_url": "https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2",
+      "archive_url": "https://www.mydrive.ch/shares/121509/40399aba7a28cfc47a7d804553228b25/download/466656866-1743171051/MVTecAD2_public_code_utils.tar.gz",
+      "archive_sha256": "fda9b379affbbde8b4d4fc1fe6ac52aaff981f347f3424e6b6de027457549f15",
+      "inspection_status": "VERIFIED_EPHEMERAL_RETRIEVAL",
+      "observed_behavior": "README.txt directs quantitative public-test AU-PRO evaluation to the MVTec AD evaluator and directs real-test evaluation to the AD 2 server. The inspected utility checks submission structure/content and only warns with a mean-plus-three-standard-deviations baseline; it is not a public AD 2 metric evaluator.",
+      "license_marker": "license.txt contains the supplied MVTec copyright and license text; verify its terms before reuse.",
+      "inspected_members": [
+        {
+          "path": "MVTecAD2_public_code_utils/README.txt",
+          "sha256": "973082aad8363dc345df7774381a9d19fb9693330c71eded830f8a978770b6b4",
+          "locators": [
+            "Evaluation Code, lines 30-39",
+            "License, lines 42-44"
+          ]
+        },
+        {
+          "path": "MVTecAD2_public_code_utils/check_and_prepare_data_for_upload.py",
+          "sha256": "c02518512219bf4844a119c6f4f7776716149c3cd932f8bc38cd8fb9d4cbc0f9",
+          "locators": [
+            "check_submission, lines 26-83",
+            "threshold warning, lines 58-76"
+          ]
+        },
+        {
+          "path": "MVTecAD2_public_code_utils/license.txt",
+          "sha256": "3d914cf4dd0530f2c91aa9d6d6a528d16547260ceffb582b5b83861d024d1ab1",
+          "locators": [
+            "license text, line 1 onward"
+          ]
+        }
+      ]
+    },
+    "mvtec_ad_evaluator_v1": {
+      "official_page_url": "https://www.mvtec.com/research-teaching/datasets/mvtec-ad",
+      "archive_url": "https://www.mydrive.ch/shares/150450/bb24b914a28ddd2b5e35bd53d23177cd/download/439517473-1665675012/mvtec_ad_evaluation.tar.xz",
+      "archive_sha256": "dfcda7d67eee25316ec6ae5042c0b1684a4cabf33b2346be351e2ce36013f220",
+      "version": "1.0",
+      "inspection_status": "VERIFIED_EPHEMERAL_RETRIEVAL",
+      "observed_behavior": "The CLI permits pro_integration_limit=0.05, then calculates and normalizes a local PRO-curve integral at that limit. This is a local MVTec AD evaluator, not proof of MVTec AD 2-server equivalence.",
+      "ad2_server_equivalence_status": "UNVERIFIED",
+      "license_marker": "LICENSE.txt contains a BSD-style MVTec copyright and redistribution notice; verify its terms before reuse.",
+      "inspected_members": [
+        {
+          "path": "mvtec_ad_evaluation/README.md",
+          "sha256": "07b890074235c6b6e75bee5acf671c251dd71a0775b41de29c1a1f00d0a5b2d0",
+          "locators": [
+            "pro_integration_limit, lines 49-53",
+            "version declaration, lines 115-119"
+          ]
+        },
+        {
+          "path": "mvtec_ad_evaluation/evaluate_experiment.py",
+          "sha256": "c8f9c06072112399ae542ce049188921394fee21996d7797df9ae72ef668c29e",
+          "locators": [
+            "parse_args, lines 43-60",
+            "calculate_au_pro_au_roc, lines 156-165"
+          ]
+        },
+        {
+          "path": "mvtec_ad_evaluation/LICENSE.txt",
+          "sha256": "6b564f197a243d80bf44d09224d2a6302ee13a8ef4a7dc1152f1e8df3ccc43d2",
+          "locators": [
+            "license text, line 1 onward"
+          ]
+        }
+      ]
+    }
+  }
+}
