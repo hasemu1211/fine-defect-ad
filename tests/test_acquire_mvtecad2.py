@@ -202,6 +202,19 @@ class ExtractionTests(unittest.TestCase):
             with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract', terms_ack=self.ack)
         self.assertFalse((self.data/'mvtec_ad_2').exists())
 
+    def test_symlink_candidates_and_non_exact_expiry_are_blocked(self):
+        body=self._tar(); digest=hashlib.sha256(body).hexdigest(); target=self.data/'mvtec_ad_2'; target.mkdir(); (target/'folder').symlink_to(self.data)
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof'):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract', terms_ack=self.ack)
+        linked=self.data/'linked'; linked.symlink_to(self.data)
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract', terms_ack=self.ack, destination=linked)
+        # A message merely containing "expired" is not an expiry proof refresh authorization.
+        other=self.data/'other'; other.mkdir()
+        with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof) as pre, patch('fine_defect_ad.acquire_mvtecad2.require_proof', side_effect=StorageBlocked('expired but not a proof')):
+            with self.assertRaises(StorageBlocked): acquire.extract(run_id='extract', terms_ack=self.ack, destination=other/'new')
+        self.assertEqual(pre.call_count, 1); self.assertFalse((other/'new').exists())
+
     def test_extraction_rename_enospc_invalidates(self):
         body=self._tar(); digest=hashlib.sha256(body).hexdigest()
         with patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_BYTES', len(body)), patch('fine_defect_ad.acquire_mvtecad2.ARCHIVE_SHA256', digest), patch('fine_defect_ad.acquire_mvtecad2.roots_from_env', return_value={'data':self.data}), patch('fine_defect_ad.acquire_mvtecad2.preflight', return_value=self.proof), patch('fine_defect_ad.acquire_mvtecad2.require_proof'), patch('fine_defect_ad.acquire_mvtecad2.os.replace', side_effect=OSError(errno.ENOSPC, 'full')):

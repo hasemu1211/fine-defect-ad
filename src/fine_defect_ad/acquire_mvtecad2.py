@@ -276,6 +276,19 @@ def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], d
     return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(manifest), "member_manifest_sha256": digest}
 
 
+def _reject_symlink_components(candidate: Path, root: Path) -> None:
+    """Inspect lexical components before resolve so symlink escapes cannot disappear."""
+    try:
+        relative = candidate.absolute().relative_to(root.absolute())
+    except ValueError as exc:
+        raise StorageBlocked("extraction destination escaped") from exc
+    current = root.absolute()
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise StorageBlocked("extraction refuses symlink destination component")
+
+
 def _file_sha256(stream) -> str:
     digest = hashlib.sha256()
     for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -288,7 +301,7 @@ def _require_fresh_proof(proof, *, run_id: str, plan: dict):
         require_proof(proof, run_id=run_id)
         return proof
     except StorageBlocked as exc:
-        if "expired" not in str(exc):
+        if str(exc) != "preflight proof expired":
             raise
     refreshed = preflight(run_id=run_id, allocations=[Allocation(**item) for item in plan["allocations"]], reserve_bytes=0, reserve_evidence=plan["reserve_evidence"])
     require_proof(refreshed, run_id=run_id)
@@ -301,7 +314,9 @@ def extract(*, run_id: str, terms_ack: Path | None = None, destination: Path | N
         raise StorageBlocked("terms acknowledgement is required before extraction")
     load_terms_ack(terms_ack)
     roots = roots_from_env(); archive_path = (roots["data"] / ARCHIVE_NAME).resolve()
-    target = (Path(destination) if destination else roots["data"] / "mvtec_ad_2").expanduser().resolve()
+    target_candidate = (Path(destination) if destination else roots["data"] / "mvtec_ad_2").expanduser().absolute()
+    _reject_symlink_components(target_candidate, roots["data"])
+    target = target_candidate.resolve()
     if not _under(target, roots["data"]) or target == roots["data"].resolve():
         raise StorageBlocked("extraction destination must be a dedicated data-root descendant")
     members, sizing = _inspect_local_archive(archive_path)
@@ -318,7 +333,9 @@ def extract(*, run_id: str, terms_ack: Path | None = None, destination: Path | N
         target.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in members:
-                final = (target / member.name).resolve()
+                candidate = target / member.name
+                _reject_symlink_components(candidate, target)
+                final = candidate.resolve()
                 if not _under(final, target):
                     raise StorageBlocked("extraction destination escaped")
                 proof = _require_fresh_proof(proof, run_id=run_id, plan=plan)
