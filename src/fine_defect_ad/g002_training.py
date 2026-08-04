@@ -135,7 +135,7 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             if lease.pending_signal: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
 
-    except Exception as exc:
+    except BaseException as exc:
         if 'lease' in locals() and lease.pending_signal:
             cause = "INTERRUPTED_RESUMABLE"
             if 'committed' in locals():
