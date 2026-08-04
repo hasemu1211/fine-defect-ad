@@ -188,7 +188,9 @@ def trusted_resume_checkpoint_io(checkpoint: Path, expected_sha256: str, artifac
             candidate = Path(path).resolve()
             if candidate != selected or file_sha256(candidate) != expected_sha256:
                 raise TrainingBlocked("trusted resume checkpoint changed or path mismatched")
-            return torch.load(candidate, map_location=map_location, weights_only=False)
+            from pathlib import PosixPath
+            with torch.serialization.safe_globals([PosixPath]):
+                return torch.load(candidate, map_location=map_location, weights_only=True)
     return TrustedLocalCheckpointIO()
 
 def _checkpoint_bytes(trainer: Any) -> bytes:
