@@ -54,16 +54,6 @@ def derived_write_bound(identity: Mapping[str, Any]) -> tuple[int, str]:
     return max(4096, size * 4), "serialized identity sidecar/evidence bytes x4; checkpoint size measured after save"
 
 
-def _atomic_jsonl(path: Path, row: Mapping[str, Any]) -> None:
-    """Atomic cumulative JSONL snapshot: prior rows survive each epoch update."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    previous = path.read_text() if path.exists() else ""
-    payload = previous + json.dumps(dict(row), sort_keys=True, allow_nan=False) + "\n"
-    temporary = path.with_suffix(path.suffix + ".partial")
-    with temporary.open("w") as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
-    os.replace(temporary, path)
-
-
 def admit_pilot(path: Path) -> dict[str, Any]:
     """Exact content-hash and protocol gate; this never reads a test/OOD path."""
     raw = Path(path).read_bytes()
@@ -124,7 +114,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
             previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
             for sig in previous: signal.signal(sig, lambda signum, frame: pending.update(signal=signum))
             class SafetyMetrics(Callback):
-                def __init__(self): self.started = time.monotonic()
+                def __init__(self): self.started = time.monotonic(); self.rows = []
                 def on_before_optimizer_step(self, trainer, module, optimizer):
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
@@ -132,13 +122,16 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
                         artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
-                    _atomic_jsonl(args.metrics_path, {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]),"rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)})
+                    row = {"epoch":trainer.current_epoch,"step":step,"lr":float(trainer.optimizers[0].param_groups[0]["lr"]),"rss_bytes":host_rss_bytes(),"vram_allocated":torch.cuda.max_memory_allocated(),"vram_reserved":torch.cuda.max_memory_reserved(),"throughput_steps_per_second":step/elapsed,"rolling_eta_seconds":max(0,MAX_STEPS-step)/(step/elapsed)}
+                    if not all(math.isfinite(float(value)) for value in row.values() if isinstance(value, (int,float))): raise RuntimeError("NONFINITE_METRIC")
+                    self.rows.append(row); artifacts.metrics(self.rows)
             from .pilot import PilotEvidence
             model, module, trainer, _ = _lazy_runtime(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
-            trainer.callbacks.append(SafetyMetrics())
+            safety = SafetyMetrics()
+            trainer.callbacks.append(safety)
             trainer.fit(model, datamodule=module, ckpt_path=str(args.resume_checkpoint) if args.resume_checkpoint else None)
             checkpoint_path, sidecar_path = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
-            metrics_path = artifacts.metrics([])
+            metrics_path = artifacts.metrics(safety.rows)
             if pending["signal"]: cause = "INTERRUPTED_RESUMABLE"
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
             else: artifacts.final({"run_id":args.run_id,"status":READY,"checkpoint_sha256":file_sha256(checkpoint_path),"metrics_sha256":file_sha256(metrics_path),"resume_exactness":"NOT_ESTABLISHED"})
