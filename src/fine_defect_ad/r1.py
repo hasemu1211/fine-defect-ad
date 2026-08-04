@@ -104,16 +104,36 @@ class RawThreshold:
         raise ValueError("pixel/image decisions are blocked pending verified comparator provenance")
 
 
+@dataclass(frozen=True)
+class RawScoreStatistics:
+    """One-pass population statistics for raw scores; no score collection is retained."""
+    pixel_count: int
+    mean: float
+    population_std: float
+    maximum: float
+
+
+def stream_raw_statistics(raw_maps: Iterable[Any]) -> RawScoreStatistics:
+    """Welford aggregation in float64/Python double, retaining only constant state."""
+    count, mean, m2, maximum = 0, 0.0, 0.0, -math.inf
+    for raw_map in raw_maps:
+        for score in _values(raw_map):
+            count += 1
+            delta = score - mean
+            mean += delta / count
+            m2 += delta * (score - mean)
+            maximum = max(maximum, score)
+    if not count:
+        raise ValueError("validation maps cannot be empty")
+    return RawScoreStatistics(count, mean, math.sqrt(m2 / count), maximum)
+
+
 def calibrate_raw_threshold(validation_maps: Iterable[Any], provenance: Mapping[str, Any]) -> RawThreshold:
     """Calculate one raw pixel threshold (mean + 3 population standard deviations)."""
     if not _formula_is_verified(provenance):
         raise ValueError("raw threshold formula requires verified provenance")
-    scores = [score for raw_map in validation_maps for score in _values(raw_map)]
-    if not scores:
-        raise ValueError("validation maps cannot be empty")
-    mean = math.fsum(scores) / len(scores)
-    variance = math.fsum((score - mean) ** 2 for score in scores) / len(scores)
-    return RawThreshold(mean + 3 * math.sqrt(variance), None, MappingProxyType(dict(provenance)))
+    stats = stream_raw_statistics(validation_maps)
+    return RawThreshold(stats.mean + 3 * stats.population_std, None, MappingProxyType(dict(provenance)))
 
 
 def raw_image_score(raw_map: Any) -> float:
