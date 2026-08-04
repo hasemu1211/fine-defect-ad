@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence
 from .g002_pilot import G002Args, _lazy_runtime, verify_local_assets, train_val_file_identity, _sha256
 from .gpu_lock import GpuLease
 from .storage import Allocation, atomic_write, preflight
-from .pilot import MAX_STEPS, READY, STOPPED_INCOMPLETE, expected_pilot_protocol_metadata, host_rss_bytes
+from .pilot import MAX_STEPS, READY, STOPPED_INCOMPLETE, expected_pilot_protocol_metadata, host_rss_bytes, lease_events
 
 PILOT_SHA256 = "0a5fc82e0e306cdd34ac8e5ee925e895010945816af6645dea4eb5be8aa9013c"
 DECISION_ID = "DEC-TRN-002"
@@ -98,7 +98,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
     try:
         pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
-        if args.resume_checkpoint: validate_resume(args.resume_checkpoint, args.resume_checkpoint.with_suffix(args.resume_checkpoint.suffix + ".json"), identity)
+        if args.resume_checkpoint: validate_slot_resume(args.resume_checkpoint, identity)
         bound, source = derived_write_bound(identity)
         proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", bound, "persistent", source, "g002-sidecar-evidence"), Allocation("artifact", bound, "transient", source, "g002-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
         artifact = Path(proof.roots["artifact"]); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
@@ -136,8 +136,18 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
 
     except Exception as exc:
         cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
-    record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
-    return record
+    try:
+        expected = "normal" if cause is None else (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal else "exception")
+        events = lease_events(args.g002.lease_directory, args.run_id)
+        validate_training_lease(events, args.run_id, expected)
+        record = public_attempt(args.run_id, pilot, cause=cause); record["checkpoint_interval_steps"] = interval
+        record["artifacts"] = artifact_hashes
+        final = artifacts.final({"run_id":args.run_id,"status":record["status"],"artifacts":artifact_hashes,"lease_outcome":expected})
+        record["artifacts"]["final"] = file_sha256(final)
+        return record
+    except Exception as exc:
+        record = public_attempt(args.run_id, pilot, cause=f"EVIDENCE:{type(exc).__name__}"); record["checkpoint_interval_steps"] = interval
+        return record
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--pilot-evidence", type=Path, required=True); parser.add_argument("--run-id", required=True)
