@@ -63,3 +63,15 @@ class TrainingArtifactTests(TestCase):
             first,_=a.checkpoint(1,lambda:b'a'); second,_=a.checkpoint(2,lambda:b'b')
             self.assertNotEqual(first, second)
             self.assertEqual(first.read_bytes(), b'a')
+
+    def test_slot_resume_and_lease_lifecycle_reject_corruption(self):
+        from fine_defect_ad.g002_training import validate_slot_resume, validate_training_lease
+        with TemporaryDirectory() as raw:
+            cp=Path(raw)/'x.ckpt'; cp.write_bytes(b'x'); identity={'a':1}
+            side={'checkpoint_name':cp.name,'checkpoint_sha256':sha256(b'x').hexdigest(),'identity_sha256':sha256(json.dumps(identity,separators=(',',':'),sort_keys=True).encode()).hexdigest(),'pilot_sha256':PILOT_SHA256,'global_step':3,'lineage':'r','resume_exactness':'NOT_ESTABLISHED'}
+            cp.with_suffix('.ckpt.json').write_text(json.dumps(side)); self.assertEqual(validate_slot_resume(cp,identity)['global_step'],3)
+            side['global_step']=70000; cp.with_suffix('.ckpt.json').write_text(json.dumps(side))
+            with self.assertRaises(TrainingBlocked): validate_slot_resume(cp,identity)
+        events=[{'state':'acquired','run_id':'r','command':'g002-training'},{'state':'released','run_id':'r','command':'g002-training','outcome':'normal'}]
+        validate_training_lease(events,'r','normal')
+        with self.assertRaises(TrainingBlocked): validate_training_lease(events,'r','signal:15')

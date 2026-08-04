@@ -200,3 +200,21 @@ class TrainingArtifacts:
 
     def final(self, record: Mapping[str, Any]) -> Path:
         return self._commit(f"g002-attempt-{self.run_id}-{sha256(json.dumps(dict(record),sort_keys=True).encode()).hexdigest()}.json", json.dumps(dict(record),sort_keys=True,allow_nan=False).encode())
+
+def validate_slot_resume(checkpoint: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
+    sidecar = checkpoint.with_suffix(checkpoint.suffix + ".json")
+    value = json.loads(sidecar.read_text())
+    required = {"checkpoint_name", "checkpoint_sha256", "identity_sha256", "pilot_sha256", "global_step", "lineage", "resume_exactness"}
+    if (not required <= value.keys() or value["checkpoint_name"] != checkpoint.name
+            or value["checkpoint_sha256"] != file_sha256(checkpoint)
+            or value["identity_sha256"] != sha256(json.dumps(dict(identity),sort_keys=True,separators=(",",":")).encode()).hexdigest()
+            or value["pilot_sha256"] != PILOT_SHA256 or not 0 <= value["global_step"] < MAX_STEPS):
+        raise TrainingBlocked("slot checkpoint resume identity gate failed")
+    return value
+
+
+def validate_training_lease(events: Sequence[Mapping[str, Any]], run_id: str, outcome: str) -> None:
+    if len(events) != 2 or [event.get("state") for event in events] != ["acquired", "released"]:
+        raise TrainingBlocked("training lease lifecycle missing")
+    if any(event.get("run_id") != run_id or event.get("command") != "g002-training" for event in events) or events[1].get("outcome") != outcome:
+        raise TrainingBlocked("training lease outcome mismatch")
