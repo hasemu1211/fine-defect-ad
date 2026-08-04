@@ -1,7 +1,7 @@
 """G002 fixed-schedule training admission and lightweight runtime instrumentation."""
 from __future__ import annotations
 
-import argparse, csv, json, math, os, signal, time, subprocess
+import argparse, json, math, os, time, subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -48,12 +48,6 @@ def require_artifact_child(path: Path, artifact: Path) -> Path:
     except ValueError as exc: raise TrainingBlocked("output must be under admitted artifact root") from exc
     return resolved
 
-def derived_write_bound(identity: Mapping[str, Any]) -> tuple[int, str]:
-    # Exact serialized identity is the durable sidecar/evidence floor; checkpoint probe is required before READY.
-    size = len(json.dumps(dict(identity), sort_keys=True).encode())
-    return max(4096, size * 4), "serialized identity sidecar/evidence bytes x4; checkpoint size measured after save"
-
-
 def admit_pilot(path: Path) -> dict[str, Any]:
     """Exact content-hash and protocol gate; this never reads a test/OOD path."""
     raw = Path(path).read_bytes()
@@ -75,16 +69,6 @@ def checkpoint_interval_steps(pilot: Mapping[str, Any]) -> int:
     return max(1, int(RPO_SECONDS / median))
 
 
-def resume_sidecar(checkpoint: Path, pilot_hash: str, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    return {"checkpoint_sha256": file_sha256(checkpoint), "pilot_sha256": pilot_hash,
-            "identity": dict(identity or {}), "decision_id": DECISION_ID, "resume_exactness": "NOT_ESTABLISHED"}
-
-def validate_resume(checkpoint: Path, sidecar: Path, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    value = json.loads(Path(sidecar).read_text())
-    if value != resume_sidecar(checkpoint, PILOT_SHA256, identity):
-        raise TrainingBlocked("checkpoint sidecar identity gate failed")
-    return value
-
 def public_attempt(run_id: str, pilot: Mapping[str, Any], *, cause: str | None = None) -> dict[str, Any]:
     return {"run_id": run_id, "status": READY if cause is None else STOPPED_INCOMPLETE,
             "limitations": [] if cause is None else [cause], "decision_id": DECISION_ID,
@@ -99,8 +83,9 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
         pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
         if args.resume_checkpoint: validate_slot_resume(args.resume_checkpoint, identity)
-        bound, source = derived_write_bound(identity)
-        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", bound, "persistent", source, "g002-sidecar-evidence"), Allocation("artifact", bound, "transient", source, "g002-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        bootstrap = json.dumps({"run_id": args.run_id, "identity": identity, "lease_events_max": 2}, sort_keys=True).encode()
+        source = f"exact canonical bootstrap bytes={len(bootstrap)} plus two bounded lease event records"
+        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", len(bootstrap), "persistent", source, "g002-bootstrap"), Allocation("artifact", 16_384, "persistent", source, "g002-lease-events")], reserve_bytes=len(bootstrap), reserve_evidence={"max_pending_atomic_write_bytes":len(bootstrap),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
         artifact = Path(proof.roots["artifact"]); require_artifact_child(args.g002.lease_directory, artifact); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
