@@ -140,7 +140,9 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             cause = "INTERRUPTED_RESUMABLE"
             if 'committed' in locals():
                 if committed["metrics"] is None: committed["metrics"] = artifacts.metrics(getattr(safety, "rows", []))
-                artifact_hashes = {key: file_sha256(path) for key, path in committed.items() if path is not None}
+                if committed["checkpoint"] is None or committed["sidecar"] is None or committed["metrics"] is None:
+                    raise RuntimeError("SIGNAL_CHECKPOINT_OR_METRICS_MISSING")
+                artifact_hashes = {key: file_sha256(path) for key, path in committed.items()}
         else:
             cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     try:
