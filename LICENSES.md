@@ -5,4 +5,4 @@
 - **anomalib / EfficientAD:** candidate only. Upstream license, version, acquisition evidence, and redistribution/weight terms remain pending; no upstream license text is copied here.
 - **SuperADD:** candidate only. License, access, and redistribution terms remain pending.
 - **DINO:** candidate only. License, access, model-weight, and redistribution terms remain pending.
-- **NVIDIA Triton NGC container:** `nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a` is pinned for `linux/amd64`, but NVIDIA NGC EULA/pull terms acceptance and an authorized pull remain pending. The image has not been pulled, executed, or redistributed.
+- **NVIDIA Triton NGC container:** NVIDIA NGC terms govern access and use of `nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a` for `linux/amd64`. No interactive terms acceptance was observed or asserted; an authorized pull remains pending. The image has not been pulled, executed, or redistributed.

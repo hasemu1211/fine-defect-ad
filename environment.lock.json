@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "PENDING_EXACT_TRITON_STORAGE_SIZING_NGC_EULA_ACCEPTANCE_AND_PINNED_PULL",
+  "status": "PENDING_NGC_TERMS_AND_PINNED_TRITON_PULL_RUNTIME",
   "evidence": {
     "host_gpu": {
       "command": ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
@@ -23,14 +23,15 @@
       "captured_at": "2026-08-04"
     },
     "container_gpu_smoke": {
-      "command": ["docker", "run", "--rm", "--gpus", "all", "hello-world"],
+      "command": ["docker", "run", "--rm", "--gpus", "all", "postgres:16", "nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
       "status": "READY",
+      "observed": "NVIDIA GeForce RTX 5060, 595.71.05, 8151 MiB",
       "captured_at": "2026-08-04"
     },
     "triton_pull": {
       "image": "nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a",
       "platform": "linux/amd64",
-      "status": "PENDING_EXACT_UNCOMPRESSED_LAYER_BYTE_COUNTS_NVIDIA_NGC_EULA_ACCEPTANCE_AND_AUTHORIZED_PULL"
+      "status": "PENDING_NVIDIA_NGC_TERMS_AND_AUTHORIZED_PULL"
     }
   },
   "direct_dependencies": []
