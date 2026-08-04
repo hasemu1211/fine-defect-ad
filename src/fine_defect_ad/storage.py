@@ -166,10 +166,12 @@ def invalidate_run(proof: PreflightProof, *, run_id: str, cause: str, partial_pa
 def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, run_id: str, overwrite: bool = True) -> dict:
     require_proof(proof, run_id=run_id); destination = Path(destination).resolve(); artifact = Path(proof.roots['artifact']).resolve()
     if not _under(destination, artifact): raise StorageBlocked('material writes are restricted to artifact root')
-    fd, raw_temporary = tempfile.mkstemp(dir=destination.parent, prefix='.' + destination.name + '.', suffix='.partial')
-    temporary = Path(raw_temporary)
+    fd = None; temporary = None; preserve_partial = False
     try:
-        with os.fdopen(fd, 'wb') as stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+        fd, raw_temporary = tempfile.mkstemp(dir=destination.parent, prefix='.' + destination.name + '.', suffix='.partial')
+        temporary = Path(raw_temporary)
+        stream = os.fdopen(fd, 'wb'); fd = None
+        with stream: stream.write(payload); stream.flush(); os.fsync(stream.fileno())
         if overwrite: os.replace(temporary, destination)
         else:
             # link(2) creates destination iff absent; unlike exists()+replace it cannot clobber a concurrent writer.
@@ -177,6 +179,8 @@ def atomic_write(destination: Path, payload: bytes, *, proof: PreflightProof, ru
         return {'status':READY, 'run_id':run_id, 'path':str(destination)}
     except OSError as exc:
         if exc.errno != errno.ENOSPC: raise
+        preserve_partial = temporary is not None
         return invalidate_run(proof, run_id=run_id, cause='ENOSPC', partial_path=temporary)
     finally:
-        temporary.unlink(missing_ok=True)
+        if fd is not None: os.close(fd)
+        if temporary is not None and not preserve_partial: temporary.unlink(missing_ok=True)

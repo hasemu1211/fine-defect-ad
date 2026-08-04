@@ -105,6 +105,8 @@ class R0Tests(unittest.TestCase):
     return real_replace(src,dst)
    with patch('fine_defect_ad.storage.os.replace',side_effect=full_on_material):
     self.assertEqual(atomic_write(roots['artifact']/'x',b'ok',proof=proof,run_id='r')['status'],'INVALIDATED')
+   self.assertTrue((roots['artifact']/'.invalidated-r.json').exists())
+   self.assertEqual(len(list(roots['artifact'].glob('.*.partial'))),1)
    with self.assertRaises(Exception): require_proof(proof,run_id='r')
  def test_docker_discovery_mismatch_and_cdi_failure(self):
   with patch('fine_defect_ad.runtime._run',return_value={'command':['docker','info'],'returncode':0,'stdout':'{"DockerRootDir":"/d","Driver":"overlayfs","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"],["Backing Filesystem","ext4"]],"SecurityOptions":["name=rootless"]}','stderr':''}):
@@ -135,3 +137,14 @@ def test_atomic_write_no_clobber_preserves_existing_destination():
   with pytest.raises(FileExistsError):
    atomic_write(destination,b'second',proof=proof,run_id='r',overwrite=False)
   assert destination.read_bytes()==b'first'
+
+
+def test_atomic_write_mkstemp_enospc_invalidates_same_run():
+ raw,roots,env,mount,docker=R0Tests()._storage()
+ with raw,patch.dict(os.environ,env,clear=True),patch('fine_defect_ad.storage._mount',side_effect=mount),patch('fine_defect_ad.runtime.discover_docker_storage',return_value=docker):
+  reserve={'max_pending_atomic_write_bytes':0,'measured_high_water_bytes':0,'runtime_or_source_citation':'test'}
+  proof=preflight(run_id='r',allocations=[Allocation('artifact',1,'persistent','test','manifest')],reserve_bytes=0,reserve_evidence=reserve)
+  with patch('fine_defect_ad.storage.require_proof'),patch('fine_defect_ad.storage.tempfile.mkstemp',side_effect=OSError(errno.ENOSPC,'full')):
+   assert atomic_write(roots['artifact']/'immutable.jsonl',b'x',proof=proof,run_id='r')['status']=='INVALIDATED'
+  assert (roots['artifact']/'.invalidated-r.json').exists()
+  with pytest.raises(Exception): require_proof(proof,run_id='r')
