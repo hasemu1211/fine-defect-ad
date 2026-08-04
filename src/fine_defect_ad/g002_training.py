@@ -34,9 +34,24 @@ def file_sha256(path: Path) -> str:
 
 def training_identity(args: G002Args) -> dict[str, Any]:
     assets = verify_local_assets(args)
-    return {"teacher_sha256": assets["teacher_small"]["sha256"], "data": assets["file_identity"],
-            "protocol": expected_pilot_protocol_metadata(),
-            "git": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()}
+    lock = Path(__file__).resolve().parents[2] / "requirements/r1-overlay.txt"
+    git = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
+    return {"teacher_sha256": assets["teacher_small"]["sha256"], "imagenette": "verified-local-imagefolder",
+            "data": assets["file_identity"], "protocol": expected_pilot_protocol_metadata(),
+            "overlay_lock_sha256": file_sha256(lock), "git": git, "git_dirty": dirty,
+            "schedule": {"max_steps": MAX_STEPS, "max_epochs": 1000}, "lineage": args.run_id}
+
+def require_artifact_child(path: Path, artifact: Path) -> Path:
+    resolved, root = Path(path).resolve(), Path(artifact).resolve()
+    try: resolved.relative_to(root)
+    except ValueError as exc: raise TrainingBlocked("output must be under admitted artifact root") from exc
+    return resolved
+
+def derived_write_bound(identity: Mapping[str, Any]) -> tuple[int, str]:
+    # Exact serialized identity is the durable sidecar/evidence floor; checkpoint probe is required before READY.
+    size = len(json.dumps(dict(identity), sort_keys=True).encode())
+    return max(4096, size * 4), "serialized identity sidecar/evidence bytes x4; checkpoint size measured after save"
 
 
 def _atomic_jsonl(path: Path, row: Mapping[str, Any]) -> None:
@@ -94,10 +109,9 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
         pilot = admit_pilot(args.pilot_evidence); interval = checkpoint_interval_steps(pilot)
         identity = training_identity(args.g002)
         if args.resume_checkpoint: validate_resume(args.resume_checkpoint, args.resume_checkpoint.with_suffix(args.resume_checkpoint.suffix + ".json"), identity)
-        # Bound the rolling checkpoint, its incoming atomic file, metrics, final evidence and lease metadata.
-        estimate = max(1, args.resume_checkpoint.stat().st_size if args.resume_checkpoint and args.resume_checkpoint.exists() else 2_000_000_000)
-        source = "checkpoint size: prior verified checkpoint or conservative 2GB initial bound"
-        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", estimate, "persistent", source, "g002-last-checkpoint"), Allocation("artifact", estimate, "transient", source, "g002-checkpoint-incoming"), Allocation("artifact", 10_000_000, "persistent", "70k epoch JSONL upper bound", "g002-metrics")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        bound, source = derived_write_bound(identity)
+        proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", bound, "persistent", source, "g002-sidecar-evidence"), Allocation("artifact", bound, "transient", source, "g002-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+        artifact = Path(proof.roots["artifact"]); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
     cause = None
