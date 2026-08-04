@@ -151,8 +151,14 @@ class ExtractionTests(unittest.TestCase):
 
     def _tar(self, name='folder/file.txt', body=b'ok'):
         with tarfile.open(self.archive, 'w:gz') as archive:
+            directory=tarfile.TarInfo('folder'); directory.type=tarfile.DIRTYPE; archive.addfile(directory)
             member=tarfile.TarInfo(name); member.size=len(body); archive.addfile(member, io.BytesIO(body))
         return self.archive.read_bytes()
+
+    def test_extract_cli_dispatches_after_module_definitions(self):
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        result = subprocess.run([sys.executable, "-m", "fine_defect_ad.acquire_mvtecad2", "--run-id", "extract", "--extract"], cwd=self.tmp.name, env=env, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 2); self.assertNotIn("NameError", result.stderr)
 
     def test_safe_extraction_and_no_write_before_proof(self):
         body=self._tar(); digest=hashlib.sha256(body).hexdigest()

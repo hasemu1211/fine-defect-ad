@@ -257,9 +257,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "STORAGE_BLOCKED", "workflow_status": STOPPED_INCOMPLETE, "reason": str(exc)})); return 2
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 # Extraction is deliberately separate from acquisition: it never contacts the source URL.
 def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], dict]:
     if not _validate_existing(archive_path):
@@ -269,13 +266,14 @@ def _inspect_local_archive(archive_path: Path) -> tuple[list[tarfile.TarInfo], d
     total = maximum = 0; manifest = []
     for member in members:
         name = Path(member.name)
-        if member.name.startswith("/") or ".." in name.parts or not member.isfile() or member.issym() or member.islnk() or member.isdev() or member.isdir():
-            raise StorageBlocked("archive contains unsafe or non-regular member")
-        total += member.size; maximum = max(maximum, member.size); manifest.append({"name": member.name, "size": member.size})
-    if not members:
+        if member.name.startswith("/") or ".." in name.parts or member.issym() or member.islnk() or member.isdev() or not (member.isfile() or member.isdir()):
+            raise StorageBlocked("archive contains unsafe member")
+        if member.isfile():
+            total += member.size; maximum = max(maximum, member.size); manifest.append({"name": member.name, "size": member.size})
+    if not manifest:
         raise StorageBlocked("archive has no regular members")
     digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(members), "member_manifest_sha256": digest}
+    return members, {"exact_uncompressed_bytes": total, "max_member_bytes": maximum, "member_count": len(manifest), "member_manifest_sha256": digest}
 
 
 def extract(*, run_id: str, destination: Path | None = None) -> dict:
@@ -298,9 +296,16 @@ def extract(*, run_id: str, destination: Path | None = None) -> dict:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in members:
                 final = (target / member.name).resolve()
-                if not _under(final, target) or final.exists():
-                    raise StorageBlocked("extraction refuses existing or escaped destination")
+                if not _under(final, target):
+                    raise StorageBlocked("extraction destination escaped")
                 require_proof(proof, run_id=run_id)
+                if member.isdir():
+                    if final.exists() and (final.is_symlink() or not final.is_dir()):
+                        raise StorageBlocked("extraction refuses unsafe existing directory")
+                    final.mkdir(parents=True, exist_ok=True)
+                    continue
+                if final.exists():
+                    raise StorageBlocked("extraction refuses existing destination")
                 final.parent.mkdir(parents=True, exist_ok=True)
                 partial = final.with_name("." + final.name + ".partial")
                 with archive.extractfile(member) as source, partial.open("xb") as output:
@@ -312,7 +317,7 @@ def extract(*, run_id: str, destination: Path | None = None) -> dict:
         if exc.errno == errno.ENOSPC:
             return invalidate_run(proof, run_id=run_id, cause="ENOSPC", partial_path=target)
         raise
-    return {"status": READY, "run_id": run_id, "archive_sha256": ARCHIVE_SHA256, "exact_uncompressed_bytes": sizing["exact_uncompressed_bytes"], "max_member_bytes": sizing["max_member_bytes"], "member_count": sizing["member_count"], "extracted_file_count": len(members), "extracted_bytes": sizing["exact_uncompressed_bytes"], "member_manifest_sha256": sizing["member_manifest_sha256"]}
+    return {"status": READY, "run_id": run_id, "archive_sha256": ARCHIVE_SHA256, "exact_uncompressed_bytes": sizing["exact_uncompressed_bytes"], "max_member_bytes": sizing["max_member_bytes"], "member_count": sizing["member_count"], "extracted_file_count": sizing["member_count"], "extracted_bytes": sizing["exact_uncompressed_bytes"], "member_manifest_sha256": sizing["member_manifest_sha256"]}
 
 
 if __name__ == "__main__":
