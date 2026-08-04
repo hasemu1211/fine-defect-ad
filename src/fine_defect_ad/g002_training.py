@@ -101,7 +101,7 @@ def run_training(args: TrainingArgs) -> dict[str, Any]:
         if args.resume_checkpoint: validate_slot_resume(args.resume_checkpoint, identity)
         bound, source = derived_write_bound(identity)
         proof = preflight(run_id=args.run_id, allocations=[Allocation("artifact", bound, "persistent", source, "g002-sidecar-evidence"), Allocation("artifact", bound, "transient", source, "g002-incoming")], reserve_bytes=0, reserve_evidence={"max_pending_atomic_write_bytes":0,"measured_high_water_bytes":0,"runtime_or_source_citation":source})
-        artifact = Path(proof.roots["artifact"]); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
+        artifact = Path(proof.roots["artifact"]); require_artifact_child(args.g002.lease_directory, artifact); require_artifact_child(args.checkpoint_directory, artifact); require_artifact_child(args.metrics_path, artifact)
     except Exception as exc:
         return public_attempt(args.run_id, {"median_seconds_per_step": 0.0}, cause=f"PROVENANCE:{type(exc).__name__}")
     cause = None
