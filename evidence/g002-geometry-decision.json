@@ -1,0 +1,82 @@
+{
+  "decision_id": "DEC-GEO-002",
+  "status": "CANDIDATE_VALIDATION_REQUIRED",
+  "scope": "EfficientAD-S tiled-inference geometry",
+  "retrieved_at_utc": "2026-08-04T08:04:44Z",
+  "primary_sources": {
+    "efficientad_wacv_2024": {
+      "url": "https://openaccess.thecvf.com/content/WACV2024/papers/Batzner_EfficientAD_Accurate_Visual_Anomaly_Detection_at_Millisecond-Level_Latencies_WACV_2024_paper.pdf",
+      "sha256": "1c80e6623764fc00327e60abcf2071ffda56d62ba3f9d4d56632e10b9b171b89",
+      "locator": "\u00a73.1, page 3: each PDN output neuron has a 33\u00d733-pixel receptive field; \u00a73.3, page 5: the autoencoder encodes the complete image and its map is combined with the local map."
+    },
+    "anomalib_2_6_0_pinned": {
+      "commit": "3759687e76395c4d6d239552d3bf6d72e003da78",
+      "torch_model_url": "https://github.com/open-edge-platform/anomalib/blob/3759687e76395c4d6d239552d3bf6d72e003da78/src/anomalib/models/image/efficient_ad/torch_model.py",
+      "torch_model_sha256": "8f80c2db5e546e5209f105c757d8c88c70c48e86bcf1d036b797fff88be3bd08",
+      "lightning_model_url": "https://github.com/open-edge-platform/anomalib/blob/3759687e76395c4d6d239552d3bf6d72e003da78/src/anomalib/models/image/efficient_ad/lightning_model.py",
+      "lightning_model_sha256": "ecf462769c4fdd4709f6cb7cf02af2859162d7a3cc5eb5fe0112a02ad419abfd",
+      "locators": [
+        "torch_model.py:158-185 SmallPatchDescriptionNetwork topology",
+        "torch_model.py:250-294 Encoder topology and 256\u21921\u00d71 example",
+        "torch_model.py:470-495 EfficientAD-S selection with padding=False and pad_maps=True defaults",
+        "torch_model.py:652-694 map construction, 4-cell padding, and interpolation",
+        "lightning_model.py:122-152 public module defaults forwarded to EfficientAdModel"
+      ]
+    }
+  },
+  "local_pdn_derivation": {
+    "topology": [
+      "conv4,s1",
+      "avgpool2,s2",
+      "conv4,s1",
+      "avgpool2,s2",
+      "conv3,s1",
+      "conv4,s1"
+    ],
+    "receptive_field_pixels": 33,
+    "effective_stride_pixels": 4,
+    "input_256_unpadded_feature_map_cells": 56,
+    "pad_maps_cells_per_edge": 4,
+    "input_256_padded_feature_map_cells": 64,
+    "derivation": "Receptive-field recurrence r'=r+(k-1)j and jump recurrence j'=j*s yield r=33 and j=4. For padding=False, the listed layers map 256 to 56 cells; pad_maps=True adds four cells on every edge before bilinear interpolation."
+  },
+  "candidate_tiling_geometry": {
+    "local_border_pixels": 16,
+    "overlap_pixels": 32,
+    "status": "CANDIDATE_DERIVED_FROM_LOCAL_PDN_ONLY",
+    "rationale": "The local candidate uses half of the 33-pixel PDN receptive field as a border and twice that border as overlap. It is not a seam-equivalence guarantee."
+  },
+  "autoencoder_limitation": {
+    "encoder_topology": [
+      "conv4,s2,p1",
+      "conv4,s2,p1",
+      "conv4,s2,p1",
+      "conv4,s2,p1",
+      "conv4,s2,p1",
+      "conv8,s1,p0"
+    ],
+    "encoder_receptive_field_pixels": 318,
+    "input_256_latent_shape": "1x1",
+    "combined_map_has_tile_global_context": true,
+    "overlap_seam_equivalence_status": "NOT_GUARANTEED",
+    "rationale": "The autoencoder branch is evaluated on each whole tile and is combined with the local map, so any overlap chosen from the local PDN alone cannot prove identical seams."
+  },
+  "finalization_gate": {
+    "final_border_status": "VALIDATION_REQUIRED",
+    "selection_rule": "Choose the final border only from an empirical plateau across tile origins and probes on frozen normal validation data.",
+    "selection_data_scope": "NORMAL_VALIDATION_ONLY",
+    "forbidden_selection_data": [
+      "TESTpub",
+      "TESTpriv",
+      "TESTpriv,mix",
+      "OOD"
+    ],
+    "external_minimum_defect_status": "NO_EXTERNAL_MINIMUM_AVAILABLE",
+    "production_defect_size_claim": "BLOCKED"
+  },
+  "public_safety": {
+    "dataset_or_result_content_included": false,
+    "absolute_local_paths_included": false,
+    "test_or_ood_used_for_selection": false
+  }
+}
