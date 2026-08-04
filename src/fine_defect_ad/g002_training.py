@@ -106,15 +106,16 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
                 Callback = callback_base
             artifacts = (artifacts_factory or TrainingArtifacts)(Path(proof.roots["artifact"]), args.run_id, identity)
             pending = {"signal": None}
+            committed = {"checkpoint": None, "sidecar": None, "metrics": None}
             class SafetyMetrics(Callback):
                 def __init__(self): self.started = time.monotonic(); self.rows = []
                 def on_before_optimizer_step(self, trainer, module, optimizer):
                     if not all(p.grad is None or bool(torch.isfinite(p.grad).all()) for p in module.parameters()): raise RuntimeError("NONFINITE_GRADIENT")
                 def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):
                     if lease.pending_signal:
-                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
+                        committed["checkpoint"], committed["sidecar"] = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer)); trainer.should_stop = True
                     elif trainer.global_step and trainer.global_step % interval == 0:
-                        artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
+                        committed["checkpoint"], committed["sidecar"] = artifacts.checkpoint(trainer.global_step, lambda: _checkpoint_bytes(trainer))
                 def on_train_epoch_end(self, trainer, module):
                     step = trainer.global_step; elapsed = max(time.monotonic()-self.started, 1e-9)
                     losses = {name: float(trainer.callback_metrics.get(name, float("nan"))) for name in ("train_loss", "train_st", "train_ae", "train_stae")}
@@ -122,7 +123,7 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
                     if not math.isfinite(row["lr"]): raise RuntimeError("NONFINITE_LR")
                     if any(not math.isfinite(value) for value in losses.values()): raise RuntimeError("NONFINITE_LOSS")
                     if not all(math.isfinite(float(value)) for value in row.values() if isinstance(value, (int,float))): raise RuntimeError("NONFINITE_METRIC")
-                    self.rows.append(row); artifacts.metrics(self.rows)
+                    self.rows.append(row); committed["metrics"] = artifacts.metrics(self.rows)
             from .pilot import PilotEvidence
             model, module, trainer, _ = runtime_factory(args.g002, PilotEvidence(args.run_id, "g002-training", MAX_STEPS), time.monotonic(), pilot_steps=None)
             safety = SafetyMetrics()
@@ -135,7 +136,13 @@ def run_training(args: TrainingArgs, *, admit_pilot_fn=admit_pilot, preflight_fn
             elif trainer.global_step != MAX_STEPS: cause = f"INCOMPLETE_STEPS:{trainer.global_step}_OF_{MAX_STEPS}"
 
     except Exception as exc:
-        cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
+        if 'lease' in locals() and lease.pending_signal:
+            cause = "INTERRUPTED_RESUMABLE"
+            if 'committed' in locals():
+                if committed["metrics"] is None: committed["metrics"] = artifacts.metrics(getattr(safety, "rows", []))
+                artifact_hashes = {key: file_sha256(path) for key, path in committed.items() if path is not None}
+        else:
+            cause = "OOM" if "out of memory" in str(exc).lower() else f"RUNNER:{type(exc).__name__}"
     try:
         expected = (f"signal:{lease.pending_signal}" if 'lease' in locals() and lease.pending_signal
                     else "exception" if cause and cause.startswith(("RUNNER:", "OOM")) else "normal")
