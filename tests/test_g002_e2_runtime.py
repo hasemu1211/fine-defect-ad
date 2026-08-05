@@ -115,6 +115,11 @@ def test_e2_ready_integration_uses_e2_lease_command_and_writes_each_map():
   finally:admission_module.admit_completed_checkpoint=original
   assert got['status']==READY, got['limitations']
   assert got['lease_events'][-1]['outcome']=='normal' and len(got['raw_maps']['map_paths'])==19
+  admission_module.admit_completed_checkpoint=lambda *_:gate
+  try:
+   failed=run_e2_evaluation(EvaluationArgs(root,checkpoint,sidecar,metrics,final,ip,root,root/'teacher',root/'imagenette','e2',root/'leases'),runtime_factory=lambda *_,**__:(_ for _ in ()).throw(RuntimeError('RUNNER_CAUSE')),lease_factory=Lease,torch_module=LiveTorch,admit=lambda **_:proof,writer=write,lease_event_loader=lambda *_:[])
+  finally: admission_module.admit_completed_checkpoint=original
+  assert 'RUNNER:RuntimeError:RUNNER_CAUSE' in failed['limitations'][0] and 'LEASE_EVIDENCE:' in failed['limitations'][0]
 
 def test_one_revision_preserves_initial_and_never_third(monkeypatch):
  import fine_defect_ad.g002_e2_runtime as module

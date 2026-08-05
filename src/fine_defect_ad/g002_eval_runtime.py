@@ -135,9 +135,10 @@ def _lease_proof(root: Path, args: EvaluationArgs, admit: Callable[..., Any]) ->
 
 
 def _lease_record(events: Sequence[Mapping[str, Any]], run_id: str, outcome: str, *, expected_command: str = COMMAND) -> list[dict[str, str]]:
+    events = [event for event in events if event.get("run_id") == run_id and event.get("command") == expected_command]
     if len(events) != 2 or [event.get("state") for event in events] != ["acquired", "released"]:
         raise ValueError("evaluation lease lifecycle missing")
-    if any(event.get("run_id") != run_id or event.get("command") != expected_command for event in events) or events[1].get("outcome") != outcome:
+    if events[1].get("outcome") != outcome:
         raise ValueError("evaluation lease outcome mismatch")
     try:
         acquired, released = (datetime.fromisoformat(str(event["timestamp"])) for event in events)

@@ -139,7 +139,10 @@ def run_e2_evaluation(args: Any, *, runtime_factory: Callable[..., Any], lease_f
             failure,lease_outcome=f"RUNNER:{type(exc).__name__}:{exc}","exception"
         if lease_entered:
             try: events=_lease_record(lease_event_loader(lease_directory,args.run_id),args.run_id,lease_outcome,expected_command=COMMAND)
-            except Exception as exc: failure,lease_outcome=f"LEASE_EVIDENCE:{type(exc).__name__}:{exc}","invalid"
+            except Exception as exc:
+                lease_failure=f"LEASE_EVIDENCE:{type(exc).__name__}:{exc}"
+                failure = lease_failure if failure is None else f"{failure}; {lease_failure}"
+                lease_outcome="invalid"
     except Exception as exc: failure=f"ADMISSION:{type(exc).__name__}:{exc}"
     record=new_evidence(args.run_id,COMMAND,READY if failure is None else STOPPED_INCOMPLETE,[] if failure is None else [failure])
     record.update({"timing_seconds":time.monotonic()-started,"rss_bytes":host_rss_bytes(),"lease_outcome":lease_outcome,"claim":NO_EXTERNAL_MINIMUM_AVAILABLE,

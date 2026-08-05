@@ -180,3 +180,9 @@ def test_admission_failure_and_bad_lease_path_write_stopped_evidence_before_gpu(
 ])
 def test_lease_record_rejects_reversed_or_missing_timestamps(events):
     with pytest.raises(ValueError): _lease_record(events, "eval", "normal")
+
+
+def test_lease_record_ignores_other_command_for_same_run():
+    e1 = lease_events_for()
+    e2 = [{**row, "command": "g002-e2-tiled-validation-raw-maps"} for row in lease_events_for()]
+    assert _lease_record([*e1, *e2], "eval", "normal")[-1]["outcome"] == "normal"
