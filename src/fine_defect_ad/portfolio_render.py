@@ -40,7 +40,7 @@ def geometry_svg(freeze: dict) -> str:
 
 
 def architecture_svg() -> str:
-    boxes=[(30,'검증 정상 이미지'),(220,'EfficientAD-S\n사전학습 추론'),(440,'원시 이상 맵\nSHA-256 계보'),(640,'검증 전용\n임계값 산출물')]
+    boxes=[(30,'검증 정상 이미지'),(220,'EfficientAD-S\n70k 학습 체크포인트'),(440,'원시 이상 맵\nSHA-256 계보'),(640,'검증 전용\n임계값 산출물')]
     body='<text x="28" y="30" class="t">이상 탐지 평가 파이프라인</text><text x="28" y="51" class="s">재현 가능한 산출물; 비교 기준 출처 부재로 판정/F1은 차단 상태</text>'
     for x,label in boxes:
         lines=label.split('\n'); body+=f'<rect x="{x}" y="98" width="150" height="90" rx="10" fill="#fff" stroke="#94a3b8"/>'
