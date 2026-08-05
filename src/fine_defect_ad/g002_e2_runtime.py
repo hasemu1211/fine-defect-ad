@@ -119,7 +119,8 @@ def run_e2_evaluation(args: Any, *, runtime_factory: Callable[..., Any], lease_f
                 collected,e2_phase=phase("E2_FULL_NORMAL_PROBE_REPEAT_SEAM",lambda:collect_e2_with_one_revision(admitted,mapper,torch_module,map_sink=sink,initial_failure_sink=initial_failure_sink))
                 e2_measured={"maps":collected["maps"],"cases":collected["probe_summary"]["cases"],"latency_seconds":e2_phase["seconds"],"vram":{"allocated_bytes":e2_phase["allocated_bytes"],"reserved_bytes":e2_phase["reserved_bytes"]},"phase":e2_phase,"revision":collected["revision"],"geometry":collected["geometry"],
                              "probe_recipe_sha256":sha256(_canonical([image["recipe"]["recipe_sha256"] for image in collected["probe_evidence"]])).hexdigest()}
-                e1_measured,e1_phase=phase("E1_FULL_NORMAL_PROBE_REPEAT",lambda:collect_e1_comparison(admitted,mapper,torch_module,border=int(collected["geometry"]["empirical_border"]))); e1_measured["vram"]={"allocated_bytes":e1_phase["allocated_bytes"],"reserved_bytes":e1_phase["reserved_bytes"]};e1_measured["phase"]=e1_phase
+                comparison_border=_collected_border(collected)
+                e1_measured,e1_phase=phase("E1_FULL_NORMAL_PROBE_REPEAT",lambda:collect_e1_comparison(admitted,mapper,torch_module,border=comparison_border)); e1_measured["vram"]={"allocated_bytes":e1_phase["allocated_bytes"],"reserved_bytes":e1_phase["reserved_bytes"]};e1_measured["phase"]=e1_phase
                 import subprocess
                 git_root=Path(__file__).resolve().parents[2]; git_commit=subprocess.run(["git","-C",str(git_root),"rev-parse","HEAD"],text=True,capture_output=True,check=True).stdout.strip(); git_dirty=subprocess.run(["git","-C",str(git_root),"diff","--quiet"],check=False).returncode != 0
                 hardware={"cuda_device":getattr(torch_module.cuda,"get_device_name",lambda _:"UNAVAILABLE")(0),"torch_version":str(getattr(torch_module,"__version__","UNKNOWN")),"cuda_version":str(getattr(getattr(torch_module,"version",None),"cuda","UNKNOWN")),"python":__import__("sys").version,"git_commit":git_commit,"git_dirty":git_dirty,"e2_phase_vram":e2_measured["vram"],"e1_phase_vram":e1_measured["vram"]}
@@ -339,6 +340,16 @@ def collect_e2_with_one_revision(admitted: AdmittedCheckpoint, mapper: Callable[
         return {**second, "revision": {"attempts": 2, "initial_border": INITIAL_BORDER, "revised_border": revised, "status": "REVISION_UNSTABLE_RETAIN_E1", "e2_eligible": False}}
     return {**second, "revision": {"attempts": 2, "initial_border": INITIAL_BORDER, "revised_border": revised, "status": "ONE_REVISION_COMPLETE", "e2_eligible": True}}
 
+def _collected_border(collected: Mapping[str, Any]) -> int:
+    borders = {row.get("border") for row in collected.get("maps", []) if isinstance(row, Mapping)}
+    if len(borders) != 1:
+        raise ValueError("E2 maps require one uniform border")
+    border = borders.pop()
+    if not isinstance(border, int) or isinstance(border, bool) or not 0 <= 2 * border < TILE:
+        raise ValueError("E2 map border invalid")
+    return border
+
+
 def _resize_rgb01(rgb: Any, torch: Any):
     """Reviewed E1 path: torchvision Resize(256, bilinear, antialias=True), no PIL approximation."""
     if tuple(rgb.shape[:2]) == (TILE, TILE): return rgb
@@ -357,7 +368,7 @@ def collect_e1_comparison(admitted: AdmittedCheckpoint, mapper: Callable[[Any], 
     for identity, source_sha in admitted.validation_identities:
         source=(admitted.dataset_root/"sheet_metal"/identity).resolve()
         if _hash(source)!=source_sha: raise ValueError("source content hash mismatch")
-        rgb=decode_rgb01(source); _plan, boxes=bounded_tiles(tuple(rgb.shape[:2]),(TILE,TILE),invalid_border=(INITIAL_BORDER,INITIAL_BORDER))
+        rgb=decode_rgb01(source); _plan, boxes=bounded_tiles(tuple(rgb.shape[:2]),(TILE,TILE),invalid_border=(border,border))
         recipe=_derived_probe_recipe(tuple(rgb.shape[:2]),boxes,source_sha,border); normal=_resize_rgb01(rgb,torch); base1=_tile_map(normal,(0,0,TILE,TILE),mapper,torch); base2=_tile_map(normal,(0,0,TILE,TILE),mapper,torch); records=[]
         for case in recipe["cases"]:
             sy,sx=case["point"]; y=min(TILE-1,round(sy*(TILE-1)/max(1,rgb.shape[0]-1)));x=min(TILE-1,round(sx*(TILE-1)/max(1,rgb.shape[1]-1)))

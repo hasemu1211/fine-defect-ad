@@ -172,3 +172,16 @@ def test_freeze_rejects_rehashed_forged_selection_and_revision():
   for key, forged in (("selection", {**frozen["selection"], "selected":"E2"}), ("revision", {"e2_eligible":False})):
    changed=deepcopy(frozen); changed[key]=forged; changed['freeze_sha256']=sha256(_canonical({name:item for name,item in changed.items() if name!='freeze_sha256'})).hexdigest()
    with pytest.raises(ValueError): verify_pretest_freeze(changed)
+
+
+
+def test_revision_uses_actual_uniform_map_border_and_retains_e1(monkeypatch):
+ import fine_defect_ad.g002_e2_runtime as module
+ assert module._collected_border({"maps":[{"border":80}] * 19, "geometry":{"empirical_border":96}}) == 80
+ with pytest.raises(ValueError): module._collected_border({"maps":[{"border":80}, {"border":96}]})
+ captured=[]; original=module.bounded_tiles
+ monkeypatch.setattr(module, "bounded_tiles", lambda shape, tile, *, invalid_border: captured.append(invalid_border) or original(shape, tile, invalid_border=invalid_border))
+ with TemporaryDirectory() as directory: module.collect_e1_comparison(admitted(Path(directory), size=(256,256)), mapper, Torch, border=80)
+ assert captured and captured[0] == (80,80)
+ rows=[{'image_identity':'validation/good/a.png','family':f,'case':f,'polarity':'black_endpoint','response_interval':[1.,1.], 'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64} for f in ('impulse','seam_crossing_line')]
+ assert module.select_e1_or_e2(e1=measured(rows), e2={**measured(rows), 'revision':{'e2_eligible':False}})['selected'] == 'E1'
