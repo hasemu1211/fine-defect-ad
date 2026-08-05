@@ -40,6 +40,7 @@
 | E1 검증 | `READY`, 원시 맵 19개 |
 | E2 검증 | `READY`, 전체 해상도 원시 맵 19개, 241.286 s |
 | TESTpub 원시 맵 추출 | `READY`, 114개(정상 24 / 불량 90), 20.523 s |
+| TESTpub local AU-PRO@0.05 | 0.02058176590668011 | MVTec AD evaluator v1.0, AD2 서버·리더보드 결과 아님 |
 | 선택된 측정 | E1 |
 | 원시 임계값 | 0.20741951395977676 (`mean + 3 × population std`) |
 

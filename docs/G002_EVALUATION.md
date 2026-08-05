@@ -15,6 +15,7 @@
 | E2 원시 맵 | 19개, `READY`, 241.286 s | 전체 해상도 타일링 경로 |
 | E2 GPU 메모리 | allocated 105,738,752 B / reserved 148,897,792 B | 실행 증거 |
 | TESTpub 원시 맵 | 114개(정상 24 / 불량 90), `READY`, 20.523 s | E1, 선택·보정 변경 없음 |
+| TESTpub local AU-PRO@0.05 | 0.02058176590668011 | MVTec AD evaluator v1.0, AD2 서버·리더보드 결과 아님 |
 | 기하 선택 | E1 | E2 시임 검증 불안정 |
 | 보정 표본 | 1,245,184 pixel | 선택된 E1 원시 맵 |
 | 평균 / 모집단 표준편차 | 0.07112031954392078 / 0.04543306480528533 | 검증 전용 점수 |
@@ -28,15 +29,17 @@
 
 TESTpub은 선택된 E1 경로에서 원시 맵만 추출했습니다. 실행 증거 SHA-256은 `02829a3ddfc0e9879ba33e7cde4ce5f9a3e50ed0a2e6f7a0abf07f22961e8523`이고, 114개 원시 맵의 파일명·해시·매니페스트를 대조했습니다. 이 단계는 선택과 보정을 변경하지 않습니다.
 
+[MVTec AD 2 Code Utils](https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2)는 정량적 TESTpub AU-PRO를 [MVTec AD evaluator v1.0](https://www.mvtec.com/research-teaching/datasets/mvtec-ad)으로 평가하도록 안내합니다. evaluator archive SHA-256 `dfcda7d67eee25316ec6ae5042c0b1684a4cabf33b2346be351e2ce36013f220`와 실행 소스의 SHA-256을 검증한 뒤, 이미 고정된 114개 원시 맵에서 local AU-PRO@0.05를 계산했습니다. 결과 증거 SHA-256은 `bfd104d65d79946b4aab9620e5b975d86061cc1cff255eb6f98daf41bae52a56`입니다.
+
 ## 선택 논리
 
 E2는 고해상도 타일링 경로로 map border 80 px를 시도한 뒤 두 번째 경험적 border 60 px로 재측정했습니다. 재측정 결과는 `REVISION_UNSTABLE_RETAIN_E1` 상태였고, E1/E2의 경계·시임 응답을 계층적 비가중 규칙으로 검사한 결과 E2의 시임 검증은 안정 기준을 만족하지 못했습니다. 따라서 동결된 선택은 **E1**입니다. 이 선택은 성능 우위 주장이 아니라 검증 규칙에 따른 입력 경로 선택입니다.
 
 ## 한계
 
-- 외부 비교기 프로토콜의 검증 가능한 출처가 없어 비교기, F1, 이미지·픽셀 판정, TESTpub 감사는 `BLOCKED` 상태입니다.
-- TESTpub·TESTpriv·OOD 데이터는 보정에 사용하지 않았습니다. AU-PRO 또는 테스트 성능 수치를 주장하지 않습니다.
-- 해시로 검증된 MVTec AD v1 공식 evaluator가 없어 TESTpub의 AU-PRO는 `BLOCKED_NO_HASH_VERIFIED_OFFICIAL_MVTEC_AD_V1_EVALUATOR` 상태입니다. 비교기·F1·임계값 감사도 사용할 수 없으므로, 114개 맵 추출은 성능 결과가 아닙니다.
+- 검증 가능한 외부 비교기 프로토콜이 없어 비교기, F1, 임계값 감사, 이미지 AU-ROC, 이미지·픽셀 판정은 `BLOCKED` 상태입니다.
+- TESTpub은 선택·보정에 사용하지 않았습니다. local AU-PRO@0.05는 해시 검증된 MVTec AD evaluator v1.0으로 계산했지만, MVTec AD 2 private server 또는 리더보드와 동등하지 않습니다.
+- local AU-PRO@0.05 `0.02058176590668011`은 낮은 수치입니다. 재현 가능한 파이프라인과 평가 입력 결속의 증거이지 모델 성능의 강점으로 해석하지 않습니다.
 - E1 보정 입력은 paired E1 probe 맵과 canonical 맵이 바이트 단위로 동일하지 않은 수치 전처리 변형을 포함합니다. 관측된 최대 입력 차이는 `1.1920929e-7`이며, 해당 차이는 공개 성능 주장으로 해석하지 않습니다.
 - 공개 SVG는 집계 수치와 구조만 보여 줍니다. 실제 데이터셋 기반 미리보기는 재배포 권한 확인 전까지 로컬 증거로 유지합니다.
 
