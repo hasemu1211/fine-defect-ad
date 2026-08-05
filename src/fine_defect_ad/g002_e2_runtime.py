@@ -37,7 +37,10 @@ def decode_rgb01(path: Path):
 
 
 def _map2d(value: Any):
-    np = _np(); array = np.asarray(value, dtype=np.float32)
+    np = _np()
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().contiguous().numpy()
+    array = np.asarray(value, dtype=np.float32)
     while array.ndim > 2 and array.shape[0] == 1: array = array[0]
     if array.ndim != 2 or array.shape != (TILE, TILE) or not bool(np.isfinite(array).all()):
         raise ValueError("tile raw map must be finite 256x256")
