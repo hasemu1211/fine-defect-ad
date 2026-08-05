@@ -145,6 +145,7 @@ def evaluate_persisted_test_public(*, artifact_root: Path, dataset_root: Path, r
 
 def evaluate_persisted_split_test_public(*, artifact_root: Path, dataset_root: Path, raw_manifest: Path,
                                          split_freeze: Path, evaluator: Path, run_id: str,
+                                         recovery: Mapping[str, str] | None = None,
                                          admit: Any = preflight, writer: Any = atomic_write) -> dict[str, Any]:
     """The sole post-freeze split-E2 AU-PRO calculation (no tuning inputs)."""
     import numpy as np
@@ -185,13 +186,18 @@ def evaluate_persisted_split_test_public(*, artifact_root: Path, dataset_root: P
         maps.append(np.frombuffer(raw, dtype="<f4").reshape(SPLIT_TARGET_SHAPE))
         masks.append(None if entry["mask"] is None else _array(resize(read_mask(entry["mask"], as_tensor=True))).squeeze())
     metric = local_au_pro_0_05(maps, masks, evaluator, include_curve=False)
-    value = float(metric["output"]["au_pro_0_05"])
+    value = _split_au_pro_value(metric)
     record = new_evidence(run_id, "g002-eval-test-public-e2-split-au-pro-0.05", READY, [])
     record.update({"protocol": "POST_HOC_PIPELINE_CORRECTION__ONE_SHOT_TESTPUB__NO_TUNING", "decision_id": SPLIT_DECISION_ID,
                    "split_freeze_sha256": _hash(freeze_path), "raw_manifest_sha256": _hash(manifest_path),
                    "counts": {"good": GOOD_COUNT, "bad": BAD_COUNT, "total": GOOD_COUNT + BAD_COUNT},
                    "map_shape": list(SPLIT_TARGET_SHAPE), "local_au_pro": metric,
                    "eligible_for_portfolio_rewrite": value > 0.02058176590668011})
+    if recovery is not None:
+        required = {"attempt_latch_sha256", "original_failure_log_sha256", "code_fix_commit"}
+        if set(recovery) != required or any(not isinstance(recovery[key], str) or not recovery[key] for key in required):
+            raise ValueError("split recovery provenance invalid")
+        record["recovery"] = dict(recovery)
     payload, digest = immutable_json(record)
     # Distinct name avoids changing historical E1 evidence.
     source = f"immutable split TESTpub evidence bytes={len(payload)} sha256={digest}"
@@ -201,6 +207,14 @@ def evaluate_persisted_split_test_public(*, artifact_root: Path, dataset_root: P
     if result.get("status") != READY or target.read_bytes() != payload:
         raise ValueError("split TESTpub evidence write failed")
     return {**record, "artifact": str(target), "artifact_sha256": digest}
+
+
+def _split_au_pro_value(metric: Mapping[str, Any]) -> float:
+    """Read the local evaluator's canonical structured result, never a threshold metric."""
+    try:
+        return float(metric["output"]["au_pro_0_05"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("official AU-PRO result schema invalid") from exc
 
 
 def run_test_public(args: TestPublicArgs, *, runtime_factory: Any = _lazy_runtime, lease_factory: Any = GpuLease,

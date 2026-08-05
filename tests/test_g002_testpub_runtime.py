@@ -30,3 +30,10 @@ def test_public_identity_set_rejects_missing_mask(tmp_path):
     next((root / "sheet_metal" / "test_public" / "ground_truth" / "bad").glob("*.png")).unlink()
     with pytest.raises(ValueError, match="missing public-test mask"):
         entries(root)
+
+
+def test_split_metric_reads_actual_local_au_pro_schema():
+    from fine_defect_ad.g002_testpub_runtime import _split_au_pro_value
+    assert _split_au_pro_value({"output": {"au_pro_0_05": 0.25}}) == .25
+    with pytest.raises(ValueError):
+        _split_au_pro_value({"output": {"au_pro_0.05": .25}})
