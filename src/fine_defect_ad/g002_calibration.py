@@ -186,6 +186,8 @@ def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecor
         records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
         geometry = geometry_evidence
     else:
+        if geometry_path != freeze["_path"] or args.geometry_evidence_sha256 != freeze["_artifact_sha256"] or args.geometry_decision_id != freeze["decision_id"]:
+            raise ValueError("E2 geometry evidence must be the admitted pre-test freeze")
         records, geometry = _admit_e2_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
     return manifest, records, geometry, freeze
 

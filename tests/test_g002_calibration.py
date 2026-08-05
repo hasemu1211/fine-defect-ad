@@ -240,12 +240,16 @@ def test_calibration_e2_freeze_manifest_binding_and_cli_help():
         e1 = measured(maps); e2 = measured(maps, delta=1.0, geometry=geometry, revision={"e2_eligible":True}); e2["maps"] = maps; e2["probe_summary"] = probe
         freeze = {"stage":"PRE_TEST_FREEZE","status":"FROZEN","decision_id":"DEC-GEO-002","selection":select_e1_or_e2(e1=e1,e2=e2),**checkpoint,"validation_identities":identity["data"]["validation"],"hardware":{},"e1_measurement":e1,"e1_measurement_sha256":digest(canonical(e1)),"e2_measurement":e2,"e2_measurement_sha256":digest(canonical(e2)),"geometry":geometry,"revision":{"e2_eligible":True}}
         freeze["freeze_sha256"] = digest(canonical(freeze)); freeze_path = root / f"g002-e2-pretest-freeze-run-{freeze['freeze_sha256']}.json"; freeze_path.write_bytes(canonical(freeze))
-        e2_args = CalibrationInput(root, "run", e2_manifest, identity_path, args.checkpoint, args.sidecar, args.metrics, final_path, args.dataset_root, args.geometry_evidence, args.geometry_evidence_sha256, args.geometry_decision_id, freeze_path)
+        e2_args = CalibrationInput(root, "run", e2_manifest, identity_path, args.checkpoint, args.sidecar, args.metrics, final_path, args.dataset_root, freeze_path, digest(freeze_path), "DEC-GEO-002", freeze_path)
         result = calibrate(e2_args, admit=gate(root, {}), writer=writer)
         assert result["selected_measurement"] == "E2" and result["pretest_freeze"]["freeze_sha256"] == freeze["freeze_sha256"]
         from dataclasses import replace
         with pytest.raises(ValueError, match="geometry evidence"):
             calibrate(replace(e2_args, geometry_decision_id="DEC-ARBITRARY"), admit=gate(root, {}), writer=writer)
+        unrelated = root / "g002-unrelated-geometry.json"
+        unrelated.write_bytes(canonical({"status":"FROZEN", "decision_id":"DEC-GEO-002", "empirical_border":999}))
+        with pytest.raises(ValueError, match="E2 geometry evidence"):
+            calibrate(replace(e2_args, geometry_evidence=unrelated, geometry_evidence_sha256=digest(unrelated)), admit=gate(root, {}), writer=writer)
         freeze["selection"] = {"selected": "E1"}; freeze["freeze_sha256"] = digest(canonical({k:v for k,v in freeze.items() if k != "freeze_sha256"})); freeze_path.write_bytes(canonical(freeze))
         with pytest.raises(ValueError): calibrate(e2_args, admit=gate(root, {}), writer=writer)
     got = subprocess.run([sys.executable, "-m", "fine_defect_ad.g002_calibration", "--help"], env={**os.environ, "PYTHONPATH": f"{Path.cwd() / 'src'}:{Path.cwd() / '.internal/venv/r1-overlay'}"}, text=True, capture_output=True)
