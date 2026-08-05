@@ -55,10 +55,9 @@ def run_e2_evaluation(args: Any, *, runtime_factory: Callable[..., Any], lease_f
                       admit: Callable[..., Any], writer: Callable[..., Mapping[str, Any]], lease_event_loader: Callable[..., Any]) -> dict[str, Any]:
     """CUDA-only E2 runner.  Every admission/runtime error returns immutable STOPPED evidence."""
     from .evidence import immutable_json, new_evidence
-    from .g002_eval_runtime import (_final_evidence, _lease_proof, _lease_record, _pinned_transform, load_training_identity, safe_load_checkpoint)
-    from .g002_evaluate import admit_completed_checkpoint, persist_e2_maps
+    from .g002_eval_runtime import _lease_proof, _lease_record, load_training_identity, safe_load_checkpoint
+    from .g002_evaluate import admit_completed_checkpoint
     from .g002_pilot import G002Args
-    from .gpu_lock import GpuLease
     from .pilot import PilotEvidence, host_rss_bytes
     from .storage import READY, STOPPED_INCOMPLETE
     import time
@@ -150,7 +149,7 @@ def run_e2_evaluation(args: Any, *, runtime_factory: Callable[..., Any], lease_f
     if admitted: record.update({"checkpoint_sha256":admitted.checkpoint_sha256,"identity_sha256":admitted.identity_sha256})
     if persisted: record["raw_maps"]=persisted
     if events: record["lease_events"]=events
-    # Keep the E2 final evidence in its own namespace. _final_evidence's safe writer/proof is reused after temporary command substitution.
+    # E2 final evidence is persisted in its own namespace.
     payload,digest=immutable_json(record); source=f"exact immutable E2 evaluation evidence bytes={len(payload)} sha256={digest}"
     try:
         proof=admit(run_id=args.run_id,allocations=[__import__('fine_defect_ad.storage',fromlist=['Allocation']).Allocation("artifact",len(payload),"persistent",source,"g002-e2-final-evidence"),__import__('fine_defect_ad.storage',fromlist=['Allocation']).Allocation("artifact",len(payload),"transient",source,"g002-e2-final-evidence-incoming")],reserve_bytes=len(payload),reserve_evidence={"max_pending_atomic_write_bytes":len(payload),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
@@ -391,12 +390,13 @@ def parse_args(argv: Iterable[str] | None = None):
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    args = parse_args(argv)
     from .g002_pilot import _lazy_runtime
     from .gpu_lock import GpuLease
     from .storage import atomic_write, preflight, READY
     import torch
     from .pilot import lease_events
-    result = run_e2_evaluation(parse_args(argv), runtime_factory=_lazy_runtime, lease_factory=GpuLease, torch_module=torch, admit=preflight, writer=atomic_write, lease_event_loader=lease_events)
+    result = run_e2_evaluation(args, runtime_factory=_lazy_runtime, lease_factory=GpuLease, torch_module=torch, admit=preflight, writer=atomic_write, lease_event_loader=lease_events)
     print(json.dumps(result, sort_keys=True, allow_nan=False))
     return 0 if result["status"] == READY else 2
 

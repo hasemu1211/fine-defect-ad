@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from fine_defect_ad.g002_e2_runtime import (COMMAND, INITIAL_BORDER, TILE, _apply_probe, collect_e2, decode_rgb01, per_origin_probe_evidence, select_e1_or_e2, stream_tiled_map, summarize_probe_cases)
-from fine_defect_ad.g002_evaluate import AdmittedCheckpoint, persist_e2_maps
+from fine_defect_ad.g002_evaluate import AdmittedCheckpoint
 from fine_defect_ad.storage import PreflightProof, READY
 
 class Tensor:
@@ -69,19 +69,6 @@ def test_selection_is_measured_hierarchical_positive_tie_and_prohibited_inputs()
  assert select_e1_or_e2(e1=base,e2=improved)['selected']=='E2'
  assert select_e1_or_e2(e1=base,e2=base)['selected']=='E1'
  with pytest.raises(ValueError):select_e1_or_e2(e1={**base,'test':1},e2=base)
-
-def test_e2_persistence_requires_exact_admitted_ids_and_rejects_duplicate_tamper():
- with TemporaryDirectory() as d:
-  root=Path(d);gate=admitted(root,size=(256,256)); rows=[]
-  for identity,source in gate.validation_identities:
-   raw=identity.encode(); rows.append({'image_identity':identity,'source_sha256':source,'map_sha256':sha256(raw).hexdigest(),'dtype':'<f4','shape':[1,1],'byte_order':'<','_bytes':raw})
-  checkpoint={key:getattr(gate,key) for key in ('checkpoint_sha256','sidecar_sha256','metrics_sha256','final_attempt_sha256','identity_sha256','pilot_sha256')}
-  collected={'status':'E2_RAW_MAPS_ONLY','maps':rows,'checkpoint':checkpoint,'transform_identity':{},'geometry':{},'claim':'NO_EXTERNAL_MINIMUM_AVAILABLE'}
-  proof=PreflightProof('e2',{'artifact':str(root)},'x','2000-01-01T00:00:00+00:00',{},[],{})
-  def write(path,payload,**_):Path(path).write_bytes(payload);return {'status':READY}
-  got=persist_e2_maps(collected,root,'e2',gate,admit=lambda **_:proof,writer=write);assert 'g002-e2-' in got['manifest']
-  collected['maps'][1]=collected['maps'][0]
-  with pytest.raises(ValueError):persist_e2_maps(collected,root,'e3',gate,admit=lambda **_:proof,writer=write)
 
 def test_e2_ready_integration_uses_e2_lease_command_and_writes_each_map():
  from fine_defect_ad.g002_eval_runtime import EvaluationArgs

@@ -52,7 +52,6 @@ def _validation_identities(identity: Mapping[str, Any]) -> tuple[tuple[str, str]
             raise ValueError("invalid validation file identity")
         path, digest = row["path"], row["sha256"]
         parts = Path(path).parts if isinstance(path, str) else ()
-        folded = path.casefold() if isinstance(path, str) else ""
         if (not isinstance(path, str) or Path(path).is_absolute() or parts[:2] != ("validation", "good")
                 or any(part in {"", ".", ".."} for part in parts) or any(segment.casefold() in {"test", "ood", "private"} for segment in parts)
                 or not isinstance(digest, str) or len(parts) != 3):
@@ -178,42 +177,3 @@ def persist_validation_maps(collected: Mapping[str, Any], artifact_root: Path, r
     manifest = root / f"g002-validation-raw-maps-{run_id}.json"; result = writer(manifest, payload, proof=proof, run_id=run_id, overwrite=False)
     if result.get("status") != READY or not manifest.is_file() or manifest.read_bytes() != payload: raise ValueError("raw-map manifest write failed")
     return {"status": "RAW_MAPS_ONLY", "manifest": str(manifest), "map_paths": [str(path) for path in written]}
-
-
-def persist_e2_maps(collected: Mapping[str, Any], artifact_root: Path, run_id: str, admitted: AdmittedCheckpoint, *,
-                    admit: Callable[..., PreflightProof] = preflight, writer: Callable[..., Mapping[str, Any]] = atomic_write) -> dict[str, Any]:
-    """Persist E2 maps in a separate namespace; E1 artifacts are never overwritten."""
-    maps = list(collected.get("maps", ()))
-    if collected.get("status") != "E2_RAW_MAPS_ONLY" or len(maps) != VALIDATION_GOOD_COUNT:
-        raise ValueError("only complete E2 validation maps can be persisted")
-    root = Path(artifact_root).resolve(); manifest_maps = []; expected = dict(admitted.validation_identities); seen = set()
-    if collected.get("checkpoint") != {key: getattr(admitted, key) for key in ("checkpoint_sha256", "sidecar_sha256", "metrics_sha256", "final_attempt_sha256", "identity_sha256", "pilot_sha256")}:
-        raise ValueError("E2 checkpoint lineage mismatch")
-    for row in maps:
-        identity = row.get("image_identity")
-        if identity not in expected or identity in seen or row.get("source_sha256") != expected[identity]:
-            raise ValueError("E2 map identity/source mismatch")
-        seen.add(identity)
-        raw = row.get("_bytes")
-        if not isinstance(raw, bytes) or sha256(raw).hexdigest() != row.get("map_sha256"):
-            raise ValueError("E2 raw-map bytes/hash mismatch")
-        manifest_maps.append({key: value for key, value in row.items() if key != "_bytes"})
-    if seen != set(expected): raise ValueError("E2 map identity set mismatch")
-    payload = json.dumps({"status": "E2_RAW_MAPS_ONLY", "run_id": run_id, "transform_identity": collected.get("transform_identity"),
-                          "geometry": collected.get("geometry"), "checkpoint": collected.get("checkpoint"), "claim": collected.get("claim"), "maps": manifest_maps}, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    raw_total = sum(len(row["_bytes"]) for row in maps); pending = max([len(payload), *(len(row["_bytes"]) for row in maps)])
-    source = f"exact E2 canonical map bytes={raw_total}; manifest bytes={len(payload)}; pending atomic bytes={pending}"
-    proof = admit(run_id=run_id, allocations=[Allocation("artifact", raw_total + len(payload), "persistent", source, "g002-e2-validation-raw-maps"),
-                                               Allocation("artifact", pending, "transient", source, "g002-e2-validation-raw-maps-incoming")], reserve_bytes=pending,
-                  reserve_evidence={"max_pending_atomic_write_bytes": pending, "measured_high_water_bytes": 0, "runtime_or_source_citation": source})
-    if Path(proof.roots["artifact"]).resolve() != root: raise ValueError("fresh proof artifact root changed")
-    written = []
-    for index, row in enumerate(maps):
-        destination = root / f"g002-e2-validation-raw-{index:02d}-{row['map_sha256']}.bin"
-        result = writer(destination, row["_bytes"], proof=proof, run_id=run_id, overwrite=False)
-        if result.get("status") != READY or not destination.is_file() or _hash(destination) != row["map_sha256"]: raise ValueError("E2 raw-map artifact write failed")
-        written.append(destination)
-    manifest = root / f"g002-e2-validation-raw-maps-{run_id}.json"
-    result = writer(manifest, payload, proof=proof, run_id=run_id, overwrite=False)
-    if result.get("status") != READY or not manifest.is_file() or manifest.read_bytes() != payload: raise ValueError("E2 raw-map manifest write failed")
-    return {"status": "E2_RAW_MAPS_ONLY", "manifest": str(manifest), "map_paths": [str(path) for path in written]}
