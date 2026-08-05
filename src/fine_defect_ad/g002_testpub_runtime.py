@@ -185,7 +185,7 @@ def evaluate_persisted_split_test_public(*, artifact_root: Path, dataset_root: P
         maps.append(np.frombuffer(raw, dtype="<f4").reshape(SPLIT_TARGET_SHAPE))
         masks.append(None if entry["mask"] is None else _array(resize(read_mask(entry["mask"], as_tensor=True))).squeeze())
     metric = local_au_pro_0_05(maps, masks, evaluator, include_curve=False)
-    value = float(metric["output"]["au_pro_0.05"])
+    value = float(metric["output"]["au_pro_0_05"])
     record = new_evidence(run_id, "g002-eval-test-public-e2-split-au-pro-0.05", READY, [])
     record.update({"protocol": "POST_HOC_PIPELINE_CORRECTION__ONE_SHOT_TESTPUB__NO_TUNING", "decision_id": SPLIT_DECISION_ID,
                    "split_freeze_sha256": _hash(freeze_path), "raw_manifest_sha256": _hash(manifest_path),
