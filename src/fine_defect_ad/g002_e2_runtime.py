@@ -386,6 +386,9 @@ def verify_pretest_freeze(value: Mapping[str, Any]) -> None:
     identities=value["validation_identities"]
     if not isinstance(identities,list) or len(identities) != 19 or len({row.get("path") for row in identities if isinstance(row,Mapping)}) != 19 or any(not isinstance(row,Mapping) or set(row)!={"path","sha256"} or not isinstance(row["path"],str) or not row["path"].startswith("validation/good/") or not isinstance(row["sha256"],str) or not row["sha256"] for row in identities): raise ValueError("invalid pre-test freeze identities")
     if sha256(_canonical(value["e1_measurement"])).hexdigest()!=value["e1_measurement_sha256"] or sha256(_canonical(value["e2_measurement"])).hexdigest()!=value["e2_measurement_sha256"]: raise ValueError("measurement summary hash mismatch")
+    expected_selection=select_e1_or_e2(e1=value["e1_measurement"],e2=value["e2_measurement"])
+    if value["selection"] != expected_selection: raise ValueError("pre-test freeze selection is not derived from measurements")
+    if value["geometry"] != value["e2_measurement"].get("geometry") or value["revision"] != value["e2_measurement"].get("revision"): raise ValueError("pre-test freeze E2 geometry/revision mismatch")
     core={key:value[key] for key in value if key!="freeze_sha256"}
     if sha256(_canonical(core)).hexdigest()!=value["freeze_sha256"]: raise ValueError("freeze hash mismatch")
 

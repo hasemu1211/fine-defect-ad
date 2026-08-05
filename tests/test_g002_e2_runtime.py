@@ -154,3 +154,16 @@ def test_freeze_summary_hash_tamper_is_rejected():
   value=measured(cases); value['geometry']={'empirical_border':16};value['revision']={'e2_eligible':True}; frozen=freeze_pretest_selection(e1=value,e2=value,admitted=gate,hardware={'gpu':'fake'})
   frozen['e2_measurement']['cases'][0]['response_interval'][0]=9.
   with pytest.raises(ValueError):verify_pretest_freeze(frozen)
+
+
+def test_freeze_rejects_rehashed_forged_selection_and_revision():
+ from copy import deepcopy
+ from fine_defect_ad.g002_e2_runtime import _canonical, freeze_pretest_selection, verify_pretest_freeze
+ with TemporaryDirectory() as d:
+  gate=admitted(Path(d),size=(256,256)); cases=[]
+  for family in ('impulse','seam_crossing_line'): cases.append({'image_identity':'validation/good/a.png','family':family,'case':family,'polarity':'black_endpoint','response_interval':[1.,1.],'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64})
+  value=measured(cases); value['geometry']={'empirical_border':16}; value['revision']={'e2_eligible':True}
+  frozen=freeze_pretest_selection(e1=value,e2=value,admitted=gate,hardware={})
+  for key, forged in (("selection", {**frozen["selection"], "selected":"E2"}), ("revision", {"e2_eligible":False})):
+   changed=deepcopy(frozen); changed[key]=forged; changed['freeze_sha256']=sha256(_canonical({name:item for name,item in changed.items() if name!='freeze_sha256'})).hexdigest()
+   with pytest.raises(ValueError): verify_pretest_freeze(changed)

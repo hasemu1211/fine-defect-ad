@@ -176,20 +176,21 @@ def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecor
     if len(allowed) != VALIDATION_GOOD_COUNT or any(not _validation_good_identity(key) or not _is_sha256(value) for key, value in allowed.items()):
         raise ValueError("training identity permits only 19 validation/good identities")
     freeze = _admit_freeze(args, root, identity, checkpoint)
+    geometry_path = _inside(args.geometry_evidence, root)
+    geometry_evidence, raw_geometry = _load_json(geometry_path, root, "frozen geometry evidence", canonical=True)
+    if (not _is_sha256(args.geometry_evidence_sha256) or _sha256(raw_geometry) != args.geometry_evidence_sha256
+            or geometry_evidence.get("decision_id") != args.geometry_decision_id or geometry_evidence.get("status") != "FROZEN"):
+        raise ValueError("pre-frozen geometry evidence binding invalid")
     selected = freeze["selection"]["selected"]
     if selected == "E1":
-        records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed)
-        geometry_path = _inside(args.geometry_evidence, root)
-        geometry, raw_geometry = _load_json(geometry_path, root, "frozen geometry evidence", canonical=True)
-        if (not _is_sha256(args.geometry_evidence_sha256) or _sha256(raw_geometry) != args.geometry_evidence_sha256
-                or geometry.get("decision_id") != args.geometry_decision_id or geometry.get("status") != "FROZEN"):
-            raise ValueError("pre-frozen geometry evidence binding invalid")
+        records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
+        geometry = geometry_evidence
     else:
         records, geometry = _admit_e2_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
     return manifest, records, geometry, freeze
 
 
-def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str]) -> list[_MapRecord]:
+def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str], freeze: Mapping[str, Any]) -> list[_MapRecord]:
     root = Path(args.artifact_root).resolve()
     if manifest_path.name != f"g002-validation-raw-maps-{args.run_id}.json":
         raise ValueError("raw-map manifest run ID binding mismatch")
@@ -212,6 +213,9 @@ def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], mani
         if not path.is_file() or path.stat().st_size != expected_bytes: raise ValueError("raw-map filename/size mismatch")
         seen.add(identity_name);records.append(_MapRecord(identity_name,path,expected_bytes,map_hash))
     if seen != set(allowed): raise ValueError("raw-map identities do not match training identity")
+    frozen_maps=freeze["e1_measurement"].get("maps") if isinstance(freeze["e1_measurement"], Mapping) else None
+    if not isinstance(frozen_maps,list) or [{"image_identity": row["image_identity"], "map_sha256": row["map_sha256"]} for row in maps] != [{"image_identity": row.get("image_identity"), "map_sha256": row.get("map_sha256")} for row in frozen_maps if isinstance(row, Mapping)]:
+        raise ValueError("E1 manifest is not bound to frozen measurement")
     return records
 
 

@@ -9,6 +9,7 @@ import pytest
 
 import fine_defect_ad.g002_calibration as calibration
 from fine_defect_ad.g002_calibration import CalibrationInput, calibrate
+from fine_defect_ad.g002_e2_runtime import select_e1_or_e2
 from fine_defect_ad.g002_training import PILOT_SHA256
 from fine_defect_ad.storage import PreflightProof, READY
 
@@ -19,6 +20,11 @@ def canonical(value):
 
 def digest(value):
     return sha256(value if isinstance(value, bytes) else Path(value).read_bytes()).hexdigest()
+
+
+def measured(maps, *, delta=0.0, geometry=None, revision=None):
+    cases = [{"image_identity":"validation/good/00.png", "family": family, "case": family, "polarity":"black_endpoint", "response_interval":[1.0 + delta, 1.0 + delta], "normal_repeatability":0.0, "response_repeatability":0.1, "cross_origin_normal_disagreement":0.0, "cross_origin_response_disagreement":0.0, "recipe_sha256":"r" * 64, "probe_content_sha256":"p" * 64} for family in ("impulse", "seam_crossing_line")]
+    return {"maps":[{"image_identity": row["image_identity"], "map_sha256": row["map_sha256"], "coverage_min":1} for row in maps], "cases":cases, "latency_seconds":1.0, "vram":{"allocated_bytes":1,"reserved_bytes":2}, "geometry":{} if geometry is None else geometry, "revision":{} if revision is None else revision}
 
 
 def fixture(root):
@@ -99,8 +105,8 @@ def fixture(root):
     raw_geometry = canonical(geometry)
     geometry_path = root / "g002-geometry-frozen.json"
     geometry_path.write_bytes(raw_geometry)
-    measurement = {"maps": maps, "geometry": {}, "probe_summary": {}}
-    freeze = {"stage": "PRE_TEST_FREEZE", "status": "FROZEN", "decision_id": "DEC-GEO-002", "selection": {"selected": "E1"}, **checkpoint_lineage, "validation_identities": validation, "hardware": {}, "e1_measurement": measurement, "e1_measurement_sha256": digest(canonical(measurement)), "e2_measurement": measurement, "e2_measurement_sha256": digest(canonical(measurement)), "geometry": {}, "revision": {}}
+    measurement = measured(maps)
+    freeze = {"stage": "PRE_TEST_FREEZE", "status": "FROZEN", "decision_id": "DEC-GEO-002", "selection": select_e1_or_e2(e1=measurement, e2=measurement), **checkpoint_lineage, "validation_identities": validation, "hardware": {}, "e1_measurement": measurement, "e1_measurement_sha256": digest(canonical(measurement)), "e2_measurement": measurement, "e2_measurement_sha256": digest(canonical(measurement)), "geometry": measurement["geometry"], "revision": measurement["revision"]}
     freeze["freeze_sha256"] = digest(canonical(freeze))
     freeze_path = root / f"g002-e2-pretest-freeze-run-{freeze['freeze_sha256']}.json"
     freeze_path.write_bytes(canonical(freeze))
@@ -231,12 +237,15 @@ def test_calibration_e2_freeze_manifest_binding_and_cli_help():
         geometry = {"empirical_border": border}; probe = {"cases": []}
         manifest = {"status": "E2_RAW_MAPS_ONLY", "run_id": "run", "checkpoint": checkpoint, "maps": maps, "geometry": geometry, "probe_summary": probe, "claim": "NO_EXTERNAL_MINIMUM_AVAILABLE"}
         e2_manifest = root / "g002-e2-validation-raw-maps-run.json"; e2_manifest.write_bytes(canonical(manifest))
-        e1 = {"maps": [], "geometry": {}, "probe_summary": {}}; e2 = {"maps": maps, "geometry": geometry, "probe_summary": probe}
-        freeze = {"stage":"PRE_TEST_FREEZE","status":"FROZEN","decision_id":"DEC-GEO-002","selection":{"selected":"E2"},**checkpoint,"validation_identities":identity["data"]["validation"],"hardware":{},"e1_measurement":e1,"e1_measurement_sha256":digest(canonical(e1)),"e2_measurement":e2,"e2_measurement_sha256":digest(canonical(e2)),"geometry":geometry,"revision":{"e2_eligible":True}}
+        e1 = measured(maps); e2 = measured(maps, delta=1.0, geometry=geometry, revision={"e2_eligible":True}); e2["maps"] = maps; e2["probe_summary"] = probe
+        freeze = {"stage":"PRE_TEST_FREEZE","status":"FROZEN","decision_id":"DEC-GEO-002","selection":select_e1_or_e2(e1=e1,e2=e2),**checkpoint,"validation_identities":identity["data"]["validation"],"hardware":{},"e1_measurement":e1,"e1_measurement_sha256":digest(canonical(e1)),"e2_measurement":e2,"e2_measurement_sha256":digest(canonical(e2)),"geometry":geometry,"revision":{"e2_eligible":True}}
         freeze["freeze_sha256"] = digest(canonical(freeze)); freeze_path = root / f"g002-e2-pretest-freeze-run-{freeze['freeze_sha256']}.json"; freeze_path.write_bytes(canonical(freeze))
         e2_args = CalibrationInput(root, "run", e2_manifest, identity_path, args.checkpoint, args.sidecar, args.metrics, final_path, args.dataset_root, args.geometry_evidence, args.geometry_evidence_sha256, args.geometry_decision_id, freeze_path)
         result = calibrate(e2_args, admit=gate(root, {}), writer=writer)
         assert result["selected_measurement"] == "E2" and result["pretest_freeze"]["freeze_sha256"] == freeze["freeze_sha256"]
+        from dataclasses import replace
+        with pytest.raises(ValueError, match="geometry evidence"):
+            calibrate(replace(e2_args, geometry_decision_id="DEC-ARBITRARY"), admit=gate(root, {}), writer=writer)
         freeze["selection"] = {"selected": "E1"}; freeze["freeze_sha256"] = digest(canonical({k:v for k,v in freeze.items() if k != "freeze_sha256"})); freeze_path.write_bytes(canonical(freeze))
         with pytest.raises(ValueError): calibrate(e2_args, admit=gate(root, {}), writer=writer)
     got = subprocess.run([sys.executable, "-m", "fine_defect_ad.g002_calibration", "--help"], env={**os.environ, "PYTHONPATH": f"{Path.cwd() / 'src'}:{Path.cwd() / '.internal/venv/r1-overlay'}"}, text=True, capture_output=True)
