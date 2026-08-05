@@ -371,14 +371,20 @@ def freeze_pretest_selection(*, e1: Mapping[str, Any], e2: Mapping[str, Any], ad
     chosen=select_e1_or_e2(e1=e1,e2=e2); e1_summary=dict(e1);e2_summary=dict(e2)
     e1_hash,e2_hash=sha256(_canonical(e1_summary)).hexdigest(),sha256(_canonical(e2_summary)).hexdigest()
     identities=[{"path":path,"sha256":digest} for path,digest in admitted.validation_identities]
-    payload={"stage":"PRE_TEST_FREEZE","selection":chosen,"checkpoint_sha256":admitted.checkpoint_sha256,"sidecar_sha256":admitted.sidecar_sha256,"metrics_sha256":admitted.metrics_sha256,"final_attempt_sha256":admitted.final_attempt_sha256,"identity_sha256":admitted.identity_sha256,"pilot_sha256":admitted.pilot_sha256,"validation_identities":identities,"hardware":dict(hardware),"e1_measurement":e1_summary,"e1_measurement_sha256":e1_hash,"e2_measurement":e2_summary,"e2_measurement_sha256":e2_hash,"geometry":e2_summary.get("geometry"),"revision":e2_summary.get("revision"),"claim":NO_EXTERNAL_MINIMUM_AVAILABLE,"limitations":["NO_EXTERNAL_MINIMUM_AVAILABLE","TESTpub/OOD/threshold/comparator/verdict prohibited before this freeze"]}
+    payload={"stage":"PRE_TEST_FREEZE","status":"FROZEN","decision_id":"DEC-GEO-002","selection":chosen,"checkpoint_sha256":admitted.checkpoint_sha256,"sidecar_sha256":admitted.sidecar_sha256,"metrics_sha256":admitted.metrics_sha256,"final_attempt_sha256":admitted.final_attempt_sha256,"identity_sha256":admitted.identity_sha256,"pilot_sha256":admitted.pilot_sha256,"validation_identities":identities,"hardware":dict(hardware),"e1_measurement":e1_summary,"e1_measurement_sha256":e1_hash,"e2_measurement":e2_summary,"e2_measurement_sha256":e2_hash,"geometry":e2_summary.get("geometry"),"revision":e2_summary.get("revision"),"claim":NO_EXTERNAL_MINIMUM_AVAILABLE,"limitations":["NO_EXTERNAL_MINIMUM_AVAILABLE","TESTpub/OOD/threshold/comparator/verdict prohibited before this freeze"]}
     result={**payload,"freeze_sha256":sha256(_canonical(payload)).hexdigest()}; verify_pretest_freeze(result); return result
 
 
 def verify_pretest_freeze(value: Mapping[str, Any]) -> None:
     """Reject tampered measurement/geometry/lineage freeze records before READY."""
-    required={"freeze_sha256","e1_measurement","e1_measurement_sha256","e2_measurement","e2_measurement_sha256","geometry","revision","checkpoint_sha256","validation_identities","hardware"}
-    if not required <= set(value): raise ValueError("incomplete pre-test freeze")
+    required={"freeze_sha256","stage","status","decision_id","selection","e1_measurement","e1_measurement_sha256","e2_measurement","e2_measurement_sha256","geometry","revision","checkpoint_sha256","sidecar_sha256","metrics_sha256","final_attempt_sha256","identity_sha256","pilot_sha256","validation_identities","hardware"}
+    if not required <= set(value) or value["stage"] != "PRE_TEST_FREEZE" or value["status"] != "FROZEN" or value["decision_id"] != "DEC-GEO-002": raise ValueError("incomplete pre-test freeze")
+    selection=value["selection"]
+    if not isinstance(selection, Mapping) or selection.get("selected") not in {"E1","E2"}: raise ValueError("invalid pre-test freeze selection")
+    hashes=("freeze_sha256","checkpoint_sha256","sidecar_sha256","metrics_sha256","final_attempt_sha256","identity_sha256","pilot_sha256","e1_measurement_sha256","e2_measurement_sha256")
+    if not all(isinstance(value[key],str) and value[key] for key in hashes): raise ValueError("invalid pre-test freeze hash")
+    identities=value["validation_identities"]
+    if not isinstance(identities,list) or len(identities) != 19 or len({row.get("path") for row in identities if isinstance(row,Mapping)}) != 19 or any(not isinstance(row,Mapping) or set(row)!={"path","sha256"} or not isinstance(row["path"],str) or not row["path"].startswith("validation/good/") or not isinstance(row["sha256"],str) or not row["sha256"] for row in identities): raise ValueError("invalid pre-test freeze identities")
     if sha256(_canonical(value["e1_measurement"])).hexdigest()!=value["e1_measurement_sha256"] or sha256(_canonical(value["e2_measurement"])).hexdigest()!=value["e2_measurement_sha256"]: raise ValueError("measurement summary hash mismatch")
     core={key:value[key] for key in value if key!="freeze_sha256"}
     if sha256(_canonical(core)).hexdigest()!=value["freeze_sha256"]: raise ValueError("freeze hash mismatch")

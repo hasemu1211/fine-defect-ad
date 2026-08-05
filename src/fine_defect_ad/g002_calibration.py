@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from .evidence import immutable_json, new_evidence
 from .g002_training import PILOT_SHA256
+from .g002_e2_runtime import verify_pretest_freeze
 from .storage import Allocation, PreflightProof, READY, atomic_write, preflight
 
 COMMAND = "g002-calibrate-validation-raw-threshold"
@@ -88,6 +89,7 @@ class CalibrationInput:
     geometry_evidence: Path
     geometry_evidence_sha256: str
     geometry_decision_id: str
+    pretest_freeze: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -134,20 +136,33 @@ def _admit_lineage(args: CalibrationInput, checkpoint: Mapping[str, Any]) -> Non
         raise ValueError("final-attempt lineage invalid")
 
 
-def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecord], dict[str, Any]]:
+def _admit_freeze(args: CalibrationInput, root: Path, identity: Mapping[str, Any], checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+    if args.pretest_freeze is None:
+        raise ValueError("canonical pre-test freeze is required")
+    freeze_path = _inside(args.pretest_freeze, root)
+    freeze, raw = _load_json(freeze_path, root, "pre-test freeze", canonical=True)
+    verify_pretest_freeze(freeze)
+    if freeze_path.name != f"g002-e2-pretest-freeze-{args.run_id}-{freeze['freeze_sha256']}.json":
+        raise ValueError("pre-test freeze filename/content binding mismatch")
+    hashes = ("checkpoint_sha256", "sidecar_sha256", "metrics_sha256", "final_attempt_sha256", "identity_sha256", "pilot_sha256")
+    if any(freeze[key] != checkpoint[key] for key in hashes):
+        raise ValueError("pre-test freeze lineage mismatch")
+    validation = identity.get("data", {}).get("validation") if isinstance(identity.get("data"), Mapping) else None
+    frozen = freeze.get("validation_identities")
+    if not isinstance(validation, list) or frozen != validation:
+        raise ValueError("pre-test freeze validation identity mismatch")
+    freeze["_path"] = freeze_path
+    freeze["_artifact_sha256"] = _sha256(raw)
+    return freeze
+
+
+def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecord], dict[str, Any], dict[str, Any]]:
     root = Path(args.artifact_root).resolve()
     manifest_path = _inside(args.raw_map_manifest, root)
     manifest, _ = _load_json(manifest_path, root, "raw-map manifest", canonical=True)
-    if manifest_path.name != f"g002-validation-raw-maps-{args.run_id}.json":
-        raise ValueError("raw-map manifest run ID binding mismatch")
-    required = {"status", "run_id", "transform_identity", "checkpoint", "maps"}
-    if set(manifest) != required or manifest["status"] != "RAW_MAPS_ONLY" or manifest["run_id"] != args.run_id:
+    if manifest.get("run_id") != args.run_id or not isinstance(manifest.get("checkpoint"), dict):
         raise ValueError("raw-map manifest schema/run ID invalid")
-    if manifest["transform_identity"] != {"normalize": False, "resize": 256, "interpolation": "bilinear"}:
-        raise ValueError("raw-map transform identity is not pinned")
     checkpoint = manifest["checkpoint"]
-    if not isinstance(checkpoint, dict):
-        raise ValueError("raw-map checkpoint lineage invalid")
     _admit_lineage(args, checkpoint)
     identity_path = _inside(args.training_identity, root)
     identity, raw_identity = _load_json(identity_path, root, "training identity", canonical=True)
@@ -160,45 +175,70 @@ def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecor
     allowed = {row.get("path"): row.get("sha256") for row in validation if isinstance(row, Mapping) and set(row) == {"path", "sha256"}}
     if len(allowed) != VALIDATION_GOOD_COUNT or any(not _validation_good_identity(key) or not _is_sha256(value) for key, value in allowed.items()):
         raise ValueError("training identity permits only 19 validation/good identities")
-    dataset = Path(args.dataset_root).resolve()
-    source_leaf = (dataset / CATEGORY).resolve()
-    records: list[_MapRecord] = []
-    expected_row = {"image_identity", "source_sha256", "map_sha256", "dtype", "shape", "byte_order", "checkpoint_sha256"}
-    maps = manifest["maps"]
-    if not isinstance(maps, list) or len(maps) != VALIDATION_GOOD_COUNT:
-        raise ValueError("exactly 19 validation raw maps are required")
-    seen: set[str] = set()
-    for index, row in enumerate(maps):
-        if not isinstance(row, dict) or set(row) != expected_row or row["image_identity"] in seen:
-            raise ValueError("raw-map record schema/identity invalid")
-        identity_name, map_hash, source_hash = row["image_identity"], row["map_sha256"], row["source_sha256"]
-        shape = row["shape"]
-        if (identity_name not in allowed or source_hash != allowed[identity_name] or not _is_sha256(map_hash)
-                or row["checkpoint_sha256"] != checkpoint["checkpoint_sha256"] or row["dtype"] != "<f4" or row["byte_order"] != "<"
-                or not isinstance(shape, list) or not shape or any(not isinstance(size, int) or isinstance(size, bool) or size <= 0 for size in shape)):
-            raise ValueError("raw-map provenance/dtype/shape invalid")
-        source = (source_leaf / identity_name).resolve()
-        try:
-            source.relative_to(source_leaf)
-        except ValueError as exc:
-            raise ValueError("validation source escapes dataset root") from exc
-        if not source.is_file() or _sha256(source) != source_hash:
-            raise ValueError("validation source identity hash mismatch")
-        path = _inside(root / f"g002-validation-raw-{index:02d}-{map_hash}.bin", root)
-        expected_bytes = math.prod(shape) * 4
-        if not path.is_file() or path.stat().st_size != expected_bytes:
-            raise ValueError("raw-map filename/size mismatch")
-        seen.add(identity_name)
-        records.append(_MapRecord(identity_name, path, expected_bytes, map_hash))
-    if seen != set(allowed):
-        raise ValueError("raw-map identities do not match training identity")
-    geometry_path = _inside(args.geometry_evidence, root)
-    geometry, raw_geometry = _load_json(geometry_path, root, "frozen geometry evidence", canonical=True)
-    if (not _is_sha256(args.geometry_evidence_sha256) or _sha256(raw_geometry) != args.geometry_evidence_sha256
-            or geometry.get("decision_id") != args.geometry_decision_id or geometry.get("status") != "FROZEN"):
-        raise ValueError("pre-frozen geometry evidence binding invalid")
-    return manifest, records, geometry
+    freeze = _admit_freeze(args, root, identity, checkpoint)
+    selected = freeze["selection"]["selected"]
+    if selected == "E1":
+        records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed)
+        geometry_path = _inside(args.geometry_evidence, root)
+        geometry, raw_geometry = _load_json(geometry_path, root, "frozen geometry evidence", canonical=True)
+        if (not _is_sha256(args.geometry_evidence_sha256) or _sha256(raw_geometry) != args.geometry_evidence_sha256
+                or geometry.get("decision_id") != args.geometry_decision_id or geometry.get("status") != "FROZEN"):
+            raise ValueError("pre-frozen geometry evidence binding invalid")
+    else:
+        records, geometry = _admit_e2_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
+    return manifest, records, geometry, freeze
 
+
+def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str]) -> list[_MapRecord]:
+    root = Path(args.artifact_root).resolve()
+    if manifest_path.name != f"g002-validation-raw-maps-{args.run_id}.json":
+        raise ValueError("raw-map manifest run ID binding mismatch")
+    required = {"status", "run_id", "transform_identity", "checkpoint", "maps"}
+    if set(manifest) != required or manifest["status"] != "RAW_MAPS_ONLY":
+        raise ValueError("raw-map manifest schema/run ID invalid")
+    if manifest["transform_identity"] != {"normalize": False, "resize": 256, "interpolation": "bilinear"}:
+        raise ValueError("raw-map transform identity is not pinned")
+    records=[]; seen=set(); maps=manifest["maps"]
+    expected_row = {"image_identity", "source_sha256", "map_sha256", "dtype", "shape", "byte_order", "checkpoint_sha256"}
+    if not isinstance(maps,list) or len(maps) != VALIDATION_GOOD_COUNT: raise ValueError("exactly 19 validation raw maps are required")
+    source_leaf=(Path(args.dataset_root).resolve()/CATEGORY).resolve()
+    for index,row in enumerate(maps):
+        if not isinstance(row,dict) or set(row)!=expected_row or row["image_identity"] in seen: raise ValueError("raw-map record schema/identity invalid")
+        identity_name,map_hash,source_hash=row["image_identity"],row["map_sha256"],row["source_sha256"]; shape=row["shape"]
+        if (identity_name not in allowed or source_hash != allowed[identity_name] or not _is_sha256(map_hash) or row["checkpoint_sha256"] != checkpoint["checkpoint_sha256"] or row["dtype"] != "<f4" or row["byte_order"] != "<" or not isinstance(shape,list) or not shape or any(not isinstance(x,int) or isinstance(x,bool) or x<=0 for x in shape)): raise ValueError("raw-map provenance/dtype/shape invalid")
+        source=(source_leaf/identity_name).resolve()
+        if not source.is_file() or _sha256(source)!=source_hash: raise ValueError("validation source identity hash mismatch")
+        path=_inside(root/f"g002-validation-raw-{index:02d}-{map_hash}.bin",root); expected_bytes=math.prod(shape)*4
+        if not path.is_file() or path.stat().st_size != expected_bytes: raise ValueError("raw-map filename/size mismatch")
+        seen.add(identity_name);records.append(_MapRecord(identity_name,path,expected_bytes,map_hash))
+    if seen != set(allowed): raise ValueError("raw-map identities do not match training identity")
+    return records
+
+
+def _admit_e2_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str], freeze: Mapping[str, Any]) -> tuple[list[_MapRecord], dict[str, Any]]:
+    root=Path(args.artifact_root).resolve()
+    required={"status","run_id","checkpoint","maps","geometry","probe_summary","claim"}
+    if manifest_path.name != f"g002-e2-validation-raw-maps-{args.run_id}.json" or set(manifest)!=required or manifest["status"] != "E2_RAW_MAPS_ONLY": raise ValueError("E2 raw-map manifest schema/run ID invalid")
+    measurement=freeze["e2_measurement"]
+    if not isinstance(measurement,Mapping) or manifest["maps"] != measurement.get("maps") or manifest["geometry"] != freeze.get("geometry") or manifest["geometry"] != measurement.get("geometry") or manifest["probe_summary"] != measurement.get("probe_summary"):
+        raise ValueError("E2 manifest is not bound to frozen measurement")
+    geometry=manifest["geometry"]; revision=freeze.get("revision")
+    if not isinstance(geometry,Mapping) or not isinstance(revision,Mapping) or revision.get("e2_eligible") is not True or not isinstance(geometry.get("empirical_border"),int): raise ValueError("E2 geometry/revision is not eligible")
+    border=geometry["empirical_border"]
+    maps=manifest["maps"]; expected={"image_identity","source_sha256","map_sha256","dtype","shape","byte_order","checkpoint_sha256","coverage_min","coverage_max","seam_max_abs","border","artifact"}
+    if not isinstance(maps,list) or len(maps)!=19: raise ValueError("exactly 19 E2 validation raw maps are required")
+    source_leaf=(Path(args.dataset_root).resolve()/CATEGORY).resolve();seen=set();records=[]
+    for index,row in enumerate(maps):
+        if not isinstance(row,dict) or set(row)!=expected or row["image_identity"] in seen: raise ValueError("E2 raw-map record schema/identity invalid")
+        identity_name,map_hash,source_hash=row["image_identity"],row["map_sha256"],row["source_sha256"];shape=row["shape"]
+        if (identity_name not in allowed or source_hash!=allowed[identity_name] or not _is_sha256(map_hash) or row["checkpoint_sha256"]!=checkpoint["checkpoint_sha256"] or row["dtype"]!="<f4" or row["byte_order"]!="<" or row["border"]!=border or not isinstance(shape,list) or len(shape)!=2 or any(not isinstance(x,int) or isinstance(x,bool) or x<256 for x in shape) or not isinstance(row["coverage_min"],int) or row["coverage_min"]<1 or not isinstance(row["coverage_max"],int) or row["coverage_max"]<row["coverage_min"] or not isinstance(row["seam_max_abs"],(int,float))): raise ValueError("E2 raw-map provenance/geometry invalid")
+        source=(source_leaf/identity_name).resolve()
+        if not source.is_file() or _sha256(source)!=source_hash: raise ValueError("validation source identity hash mismatch")
+        expected_name=f"g002-e2-validation-raw-b{border:03d}-{index:02d}-{map_hash}.bin"; path=_inside(Path(row["artifact"]),root)
+        if path.name != expected_name or not path.is_file() or path.stat().st_size != math.prod(shape)*4 or _sha256(path)!=map_hash: raise ValueError("E2 raw-map filename/byte/hash mismatch")
+        seen.add(identity_name);records.append(_MapRecord(identity_name,path,math.prod(shape)*4,map_hash))
+    if seen != set(allowed): raise ValueError("E2 raw-map identities do not match training identity")
+    return records,dict(geometry)
 
 def _stats(records: Iterable[_MapRecord], *, chunk_values: int = 65_536) -> tuple[int, float, float, list[dict[str, Any]]]:
     """Stream hash, byte count, and Welford statistics together; no map is retained."""
@@ -237,7 +277,7 @@ def _relative(path: Path, root: Path) -> str:
 def calibrate(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = preflight, writer: Callable[..., Mapping[str, Any]] = atomic_write) -> dict[str, Any]:
     """Persist one immutable calibration artifact without enabling any decision path."""
     root = Path(args.artifact_root).resolve()
-    manifest, records, geometry = _admit_input(args)
+    manifest, records, geometry, freeze = _admit_input(args)
     count, mean, population_std, maxima = _stats(records)
     record = new_evidence(args.run_id, COMMAND, STATUS, [
         "official comparator provenance is unavailable; comparator and all verdict/F1 paths remain blocked",
@@ -253,7 +293,9 @@ def calibrate(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = 
         "per_image_max_raw_scores": maxima,
         "raw_map_manifest": {"path": _relative(args.raw_map_manifest, root), "sha256": _sha256(_canonical(manifest))},
         "checkpoint": manifest["checkpoint"],
-        "geometry": {"path": _relative(args.geometry_evidence, root), "sha256": args.geometry_evidence_sha256, "decision_id": args.geometry_decision_id, "status": geometry["status"]},
+        "selected_measurement": freeze["selection"]["selected"],
+        "pretest_freeze": {"path": _relative(freeze["_path"], root), "sha256": freeze["_artifact_sha256"], "freeze_sha256": freeze["freeze_sha256"], "decision_id": freeze["decision_id"], "status": freeze["status"]},
+        "geometry": {"path": _relative(args.geometry_evidence, root), "sha256": args.geometry_evidence_sha256, "decision_id": args.geometry_decision_id, "status": geometry.get("status", freeze["status"])},
         "blocked": {"comparator": "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE", "pixel_verdict": "BLOCKED", "image_verdict": "BLOCKED", "f1": "BLOCKED", "testpub_audit": "BLOCKED"},
     })
     payload, digest = immutable_json(record)
@@ -270,3 +312,21 @@ def calibrate(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = 
     if result.get("status") != READY or not destination.is_file() or destination.read_bytes() != payload:
         raise ValueError("immutable calibration artifact write failed")
     return {**record, "artifact": str(destination), "artifact_sha256": digest}
+
+
+def parse_args(argv: Iterable[str] | None = None) -> CalibrationInput:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("artifact-root", "run-id", "raw-map-manifest", "training-identity", "checkpoint", "sidecar", "metrics", "final-attempt", "dataset-root", "geometry-evidence", "geometry-evidence-sha256", "geometry-decision-id", "pretest-freeze"):
+        parser.add_argument("--" + name, required=True)
+    ns = parser.parse_args(argv)
+    return CalibrationInput(Path(ns.artifact_root), ns.run_id, Path(ns.raw_map_manifest), Path(ns.training_identity), Path(ns.checkpoint), Path(ns.sidecar), Path(ns.metrics), Path(ns.final_attempt), Path(ns.dataset_root), Path(ns.geometry_evidence), ns.geometry_evidence_sha256, ns.geometry_decision_id, Path(ns.pretest_freeze))
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    print(json.dumps(calibrate(parse_args(argv)), sort_keys=True, allow_nan=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
