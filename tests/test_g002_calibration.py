@@ -4,6 +4,7 @@ import struct
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from dataclasses import replace
 
 import pytest
 
@@ -106,7 +107,9 @@ def fixture(root):
     geometry_path = root / "g002-geometry-frozen.json"
     geometry_path.write_bytes(raw_geometry)
     measurement = measured(maps)
-    freeze = {"stage": "PRE_TEST_FREEZE", "status": "FROZEN", "decision_id": "DEC-GEO-002", "selection": select_e1_or_e2(e1=measurement, e2=measurement), **checkpoint_lineage, "validation_identities": validation, "hardware": {}, "e1_measurement": measurement, "e1_measurement_sha256": digest(canonical(measurement)), "e2_measurement": measurement, "e2_measurement_sha256": digest(canonical(measurement)), "geometry": measurement["geometry"], "revision": measurement["revision"]}
+    e2_measurement = measured(maps, revision={"status":"REVISION_UNSTABLE_RETAIN_E1", "e2_eligible":False})
+    for row in e2_measurement["cases"]: row["cross_origin_response_disagreement"] = 1.0
+    freeze = {"stage": "PRE_TEST_FREEZE", "status": "FROZEN", "decision_id": "DEC-GEO-002", "selection": select_e1_or_e2(e1=measurement, e2=e2_measurement), **checkpoint_lineage, "validation_identities": validation, "hardware": {}, "e1_measurement": measurement, "e1_measurement_sha256": digest(canonical(measurement)), "e2_measurement": e2_measurement, "e2_measurement_sha256": digest(canonical(e2_measurement)), "geometry": e2_measurement["geometry"], "revision": e2_measurement["revision"]}
     freeze["freeze_sha256"] = digest(canonical(freeze))
     freeze_path = root / f"g002-e2-pretest-freeze-run-{freeze['freeze_sha256']}.json"
     freeze_path.write_bytes(canonical(freeze))
@@ -125,6 +128,8 @@ def fixture(root):
         "DEC-GEO-FINAL",
         freeze_path,
     )
+    binding = calibration.build_post_selection_binding(args, admit=gate(root, {}), writer=writer)
+    args = replace(args, post_selection_binding=Path(binding["artifact"]))
     return args, manifest_path, geometry_path
 
 
@@ -157,7 +162,7 @@ def test_calibration_known_array_oracle_and_blocks_all_decisions():
         assert seen["allocations"][0].bytes == Path(result["artifact"]).stat().st_size
 
 
-@pytest.mark.parametrize("tamper", ["map", "manifest", "identity", "checkpoint", "sidecar", "metrics", "final", "source"])
+@pytest.mark.parametrize("tamper", ["map", "manifest", "identity", "checkpoint", "sidecar", "metrics", "final", "source", "binding"])
 def test_calibration_rejects_tampered_admitted_lineage(tamper):
     with TemporaryDirectory() as directory:
         root = Path(directory)
@@ -171,6 +176,7 @@ def test_calibration_rejects_tampered_admitted_lineage(tamper):
             "metrics": args.metrics,
             "final": args.final_attempt,
             "source": args.dataset_root / "sheet_metal" / "validation" / "good" / "00.png",
+            "binding": args.post_selection_binding,
         }
         paths[tamper].write_bytes(b"tampered")
         with pytest.raises(ValueError):

@@ -90,6 +90,7 @@ class CalibrationInput:
     geometry_evidence_sha256: str
     geometry_decision_id: str
     pretest_freeze: Path | None = None
+    post_selection_binding: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +157,7 @@ def _admit_freeze(args: CalibrationInput, root: Path, identity: Mapping[str, Any
     return freeze
 
 
-def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecord], dict[str, Any], dict[str, Any]]:
+def _admit_input(args: CalibrationInput, *, require_binding: bool = True) -> tuple[dict[str, Any], list[_MapRecord], dict[str, Any], dict[str, Any]]:
     root = Path(args.artifact_root).resolve()
     manifest_path = _inside(args.raw_map_manifest, root)
     manifest, _ = _load_json(manifest_path, root, "raw-map manifest", canonical=True)
@@ -183,7 +184,8 @@ def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecor
         raise ValueError("pre-frozen geometry evidence binding invalid")
     selected = freeze["selection"]["selected"]
     if selected == "E1":
-        records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed, freeze)
+        records = _admit_e1_manifest(args, manifest, manifest_path, checkpoint, allowed)
+        if require_binding: _admit_post_selection_binding(args, manifest, records, freeze)
         geometry = geometry_evidence
     else:
         if geometry_path != freeze["_path"] or args.geometry_evidence_sha256 != freeze["_artifact_sha256"] or args.geometry_decision_id != freeze["decision_id"]:
@@ -192,7 +194,7 @@ def _admit_input(args: CalibrationInput) -> tuple[dict[str, Any], list[_MapRecor
     return manifest, records, geometry, freeze
 
 
-def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str], freeze: Mapping[str, Any]) -> list[_MapRecord]:
+def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str]) -> list[_MapRecord]:
     root = Path(args.artifact_root).resolve()
     if manifest_path.name != f"g002-validation-raw-maps-{args.run_id}.json":
         raise ValueError("raw-map manifest run ID binding mismatch")
@@ -215,11 +217,43 @@ def _admit_e1_manifest(args: CalibrationInput, manifest: Mapping[str, Any], mani
         if not path.is_file() or path.stat().st_size != expected_bytes: raise ValueError("raw-map filename/size mismatch")
         seen.add(identity_name);records.append(_MapRecord(identity_name,path,expected_bytes,map_hash))
     if seen != set(allowed): raise ValueError("raw-map identities do not match training identity")
-    frozen_maps=freeze["e1_measurement"].get("maps") if isinstance(freeze["e1_measurement"], Mapping) else None
-    if not isinstance(frozen_maps,list) or [{"image_identity": row["image_identity"], "map_sha256": row["map_sha256"]} for row in maps] != [{"image_identity": row.get("image_identity"), "map_sha256": row.get("map_sha256")} for row in frozen_maps if isinstance(row, Mapping)]:
-        raise ValueError("E1 manifest is not bound to frozen measurement")
     return records
 
+
+
+def _binding_core(args: CalibrationInput, manifest: Mapping[str, Any], records: Iterable[_MapRecord], freeze: Mapping[str, Any]) -> dict[str, Any]:
+    root=Path(args.artifact_root).resolve(); selection=freeze["selection"]; revision=freeze["revision"]
+    if (selection.get("selected") != "E1" or selection.get("measured_gates", {}).get("E2", {}).get("origin_seam_valid") is not False
+            or revision.get("status") != "REVISION_UNSTABLE_RETAIN_E1" or revision.get("e2_eligible") is not False):
+        raise ValueError("post-selection binding requires unstable E2 retained-E1 freeze")
+    return {"stage":"POST_SELECTION_CALIBRATION_INPUT_BINDING","status":"FROZEN","run_id":args.run_id,"selected":"E1",
+            "freeze":{"path":_relative(freeze["_path"],root),"artifact_sha256":freeze["_artifact_sha256"],"freeze_sha256":freeze["freeze_sha256"]},
+            "canonical_manifest":{"path":_relative(args.raw_map_manifest,root),"sha256":_sha256(_canonical(manifest))},
+            "lineage":{key:manifest["checkpoint"][key] for key in ("checkpoint_sha256","sidecar_sha256","metrics_sha256","final_attempt_sha256","identity_sha256","pilot_sha256")},
+            "maps":[{"image_identity":record.image_identity,"map_sha256":record.digest} for record in records],
+            "limitations":["PAIRED_E1_PREPROCESSING_NUMERIC_VARIANT: paired E1 probe maps and canonical maps are distinct/non-byte-equivalent; selection remains frozen"]}
+
+
+def _admit_post_selection_binding(args: CalibrationInput, manifest: Mapping[str, Any], records: list[_MapRecord], freeze: Mapping[str, Any]) -> None:
+    if args.post_selection_binding is None: raise ValueError("post-selection calibration input binding is required for E1")
+    root=Path(args.artifact_root).resolve(); path=_inside(args.post_selection_binding,root); value,raw=_load_json(path,root,"post-selection calibration input binding",canonical=True)
+    digest=_sha256(raw)
+    if path.name != f"g002-post-selection-calibration-input-{args.run_id}-{digest}.json" or set(value)!={* _binding_core(args,manifest,records,freeze),"binding_sha256"}: raise ValueError("invalid post-selection calibration input binding")
+    core={key:item for key,item in value.items() if key!="binding_sha256"}
+    if value["binding_sha256"] != sha256(_canonical(core)).hexdigest() or core != _binding_core(args,manifest,records,freeze): raise ValueError("post-selection calibration input binding mismatch")
+
+
+def build_post_selection_binding(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = preflight, writer: Callable[..., Mapping[str, Any]] = atomic_write) -> dict[str, Any]:
+    """CPU-only immutable bridge from frozen E1 selection to canonical calibration maps."""
+    root=Path(args.artifact_root).resolve(); manifest,records,_geometry,freeze=_admit_input(args,require_binding=False)
+    if freeze["selection"]["selected"] != "E1": raise ValueError("post-selection binding is only valid for selected E1")
+    core=_binding_core(args,manifest,records,freeze); payload={**core,"binding_sha256":sha256(_canonical(core)).hexdigest()}; raw=_canonical(payload); digest=_sha256(raw)
+    source=f"exact immutable post-selection calibration input binding bytes={len(raw)} sha256={digest}"
+    proof=admit(run_id=args.run_id,allocations=[Allocation("artifact",len(raw),"persistent",source,"g002-post-selection-calibration-input"),Allocation("artifact",len(raw),"transient",source,"g002-post-selection-calibration-input-incoming")],reserve_bytes=len(raw),reserve_evidence={"max_pending_atomic_write_bytes":len(raw),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
+    if Path(proof.roots["artifact"]).resolve()!=root: raise ValueError("fresh proof artifact root changed")
+    destination=root/f"g002-post-selection-calibration-input-{args.run_id}-{digest}.json"; result=writer(destination,raw,proof=proof,run_id=args.run_id,overwrite=False)
+    if result.get("status")!=READY or destination.read_bytes()!=raw: raise ValueError("post-selection calibration input binding write failed")
+    return {**payload,"artifact":str(destination),"artifact_sha256":digest}
 
 def _admit_e2_manifest(args: CalibrationInput, manifest: Mapping[str, Any], manifest_path: Path, checkpoint: Mapping[str, Any], allowed: Mapping[str, str], freeze: Mapping[str, Any]) -> tuple[list[_MapRecord], dict[str, Any]]:
     root=Path(args.artifact_root).resolve()
@@ -288,6 +322,7 @@ def calibrate(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = 
     record = new_evidence(args.run_id, COMMAND, STATUS, [
         "official comparator provenance is unavailable; comparator and all verdict/F1 paths remain blocked",
         "TESTpub/TESTpriv/OOD inputs are forbidden from calibration and audit remains blocked",
+        *( ["PAIRED_E1_PREPROCESSING_NUMERIC_VARIANT: paired E1 probe maps and canonical maps are distinct/non-byte-equivalent"] if freeze["selection"]["selected"] == "E1" else []),
     ])
     record.update({
         "raw_threshold": mean + 3.0 * population_std,
@@ -301,6 +336,7 @@ def calibrate(args: CalibrationInput, *, admit: Callable[..., PreflightProof] = 
         "checkpoint": manifest["checkpoint"],
         "selected_measurement": freeze["selection"]["selected"],
         "pretest_freeze": {"path": _relative(freeze["_path"], root), "sha256": freeze["_artifact_sha256"], "freeze_sha256": freeze["freeze_sha256"], "decision_id": freeze["decision_id"], "status": freeze["status"]},
+        **({"post_selection_binding": {"path": _relative(args.post_selection_binding, root), "sha256": _sha256(args.post_selection_binding)}} if freeze["selection"]["selected"] == "E1" else {}),
         "geometry": {"path": _relative(args.geometry_evidence, root), "sha256": args.geometry_evidence_sha256, "decision_id": args.geometry_decision_id, "status": geometry.get("status", freeze["status"])},
         "blocked": {"comparator": "BLOCKED_MISSING_VERIFIED_PROTOCOL_PROVENANCE", "pixel_verdict": "BLOCKED", "image_verdict": "BLOCKED", "f1": "BLOCKED", "testpub_audit": "BLOCKED"},
     })
@@ -325,12 +361,16 @@ def parse_args(argv: Iterable[str] | None = None) -> CalibrationInput:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("artifact-root", "run-id", "raw-map-manifest", "training-identity", "checkpoint", "sidecar", "metrics", "final-attempt", "dataset-root", "geometry-evidence", "geometry-evidence-sha256", "geometry-decision-id", "pretest-freeze"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--post-selection-binding")
+    parser.add_argument("--build-post-selection-binding", action="store_true")
     ns = parser.parse_args(argv)
-    return CalibrationInput(Path(ns.artifact_root), ns.run_id, Path(ns.raw_map_manifest), Path(ns.training_identity), Path(ns.checkpoint), Path(ns.sidecar), Path(ns.metrics), Path(ns.final_attempt), Path(ns.dataset_root), Path(ns.geometry_evidence), ns.geometry_evidence_sha256, ns.geometry_decision_id, Path(ns.pretest_freeze))
+    result=CalibrationInput(Path(ns.artifact_root), ns.run_id, Path(ns.raw_map_manifest), Path(ns.training_identity), Path(ns.checkpoint), Path(ns.sidecar), Path(ns.metrics), Path(ns.final_attempt), Path(ns.dataset_root), Path(ns.geometry_evidence), ns.geometry_evidence_sha256, ns.geometry_decision_id, Path(ns.pretest_freeze), Path(ns.post_selection_binding) if ns.post_selection_binding else None)
+    return result, ns.build_post_selection_binding
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    print(json.dumps(calibrate(parse_args(argv)), sort_keys=True, allow_nan=False))
+    args, build = parse_args(argv)
+    print(json.dumps(build_post_selection_binding(args) if build else calibrate(args), sort_keys=True, allow_nan=False))
     return 0
 
 
