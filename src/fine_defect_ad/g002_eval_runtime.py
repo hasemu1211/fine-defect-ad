@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from datetime import datetime
 from dataclasses import dataclass, fields, is_dataclass
@@ -134,8 +135,8 @@ def _lease_proof(root: Path, args: EvaluationArgs, admit: Callable[..., Any]) ->
     if Path(proof.roots["artifact"]).resolve() != root: raise ValueError("fresh proof artifact root changed")
 
 
-def _lease_record(events: Sequence[Mapping[str, Any]], run_id: str, outcome: str, *, expected_command: str = COMMAND) -> list[dict[str, str]]:
-    events = [event for event in events if event.get("run_id") == run_id and event.get("command") == expected_command]
+def _lease_record(events: Sequence[Mapping[str, Any]], run_id: str, outcome: str, *, expected_command: str = COMMAND, expected_pid: int | None = None) -> list[dict[str, str]]:
+    events = [event for event in events if event.get("run_id") == run_id and event.get("command") == expected_command and (expected_pid is None or event.get("pid") == expected_pid)]
     if len(events) != 2 or [event.get("state") for event in events] != ["acquired", "released"]:
         raise ValueError("evaluation lease lifecycle missing")
     if events[1].get("outcome") != outcome:
@@ -187,7 +188,7 @@ def run_evaluation(args: EvaluationArgs, *, runtime_factory: Callable[..., Any] 
         except Exception as exc:
             failure, lease_outcome = f"RUNNER:{type(exc).__name__}:{exc}", "exception"
         if lease_entered:
-            try: recorded_lease = _lease_record(lease_event_loader(lease_directory, args.run_id), args.run_id, lease_outcome)
+            try: recorded_lease = _lease_record(lease_event_loader(lease_directory, args.run_id), args.run_id, lease_outcome, expected_pid=os.getpid())
             except Exception as exc: failure, lease_outcome = f"LEASE_EVIDENCE:{type(exc).__name__}:{exc}", "invalid"
     except Exception as exc:
         failure = f"ADMISSION:{type(exc).__name__}:{exc}"

@@ -76,7 +76,7 @@ class Lease:
     def __exit__(self, *args): return False
 
 def lease_events_for(outcome="normal"):
-    return [{"state": "acquired", "run_id": "eval", "command": COMMAND, "timestamp": "2026-01-01T00:00:00+00:00"}, {"state": "released", "run_id": "eval", "command": COMMAND, "timestamp": "2026-01-01T00:00:01+00:00", "outcome": outcome}]
+    return [{"state": "acquired", "run_id": "eval", "command": COMMAND, "pid": os.getpid(), "timestamp": "2026-01-01T00:00:00+00:00"}, {"state": "released", "run_id": "eval", "command": COMMAND, "pid": os.getpid(), "timestamp": "2026-01-01T00:00:01+00:00", "outcome": outcome}]
 
 def test_identity_artifact_is_canonical_and_filename_bound():
     with TemporaryDirectory() as tmp:
@@ -186,3 +186,10 @@ def test_lease_record_ignores_other_command_for_same_run():
     e1 = lease_events_for()
     e2 = [{**row, "command": "g002-e2-tiled-validation-raw-maps"} for row in lease_events_for()]
     assert _lease_record([*e1, *e2], "eval", "normal")[-1]["outcome"] == "normal"
+
+
+def test_lease_record_binds_current_pid_when_retries_share_run_and_command():
+    earlier = [{**row, "pid": 11} for row in lease_events_for()]
+    current = [{**row, "pid": 22} for row in lease_events_for()]
+    assert _lease_record([*earlier, *current], "eval", "normal", expected_pid=22)[-1]["outcome"] == "normal"
+    with pytest.raises(ValueError): _lease_record([*earlier, *current], "eval", "normal", expected_pid=33)

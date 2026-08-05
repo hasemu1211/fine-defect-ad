@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -138,7 +139,7 @@ def run_e2_evaluation(args: Any, *, runtime_factory: Callable[..., Any], lease_f
         except Exception as exc:
             failure,lease_outcome=f"RUNNER:{type(exc).__name__}:{exc}","exception"
         if lease_entered:
-            try: events=_lease_record(lease_event_loader(lease_directory,args.run_id),args.run_id,lease_outcome,expected_command=COMMAND)
+            try: events=_lease_record(lease_event_loader(lease_directory,args.run_id),args.run_id,lease_outcome,expected_command=COMMAND,expected_pid=os.getpid())
             except Exception as exc:
                 lease_failure=f"LEASE_EVIDENCE:{type(exc).__name__}:{exc}"
                 failure = lease_failure if failure is None else f"{failure}; {lease_failure}"

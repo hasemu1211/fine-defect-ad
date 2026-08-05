@@ -111,7 +111,7 @@ def test_e2_ready_integration_uses_e2_lease_command_and_writes_each_map():
   def write(path,payload,**_):Path(path).write_bytes(payload);return {'status':READY}
   original=admission_module.admit_completed_checkpoint;admission_module.admit_completed_checkpoint=lambda *_:gate
   try:
-   got=run_e2_evaluation(EvaluationArgs(root,checkpoint,sidecar,metrics,final,ip,root,root/'teacher',root/'imagenette','e2',root/'leases'),runtime_factory=lambda *_,**__:(Model(),None,None,None),lease_factory=Lease,torch_module=LiveTorch,admit=lambda **_:proof,writer=write,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'e2','command':COMMAND,'timestamp':'2026-01-01T00:00:00+00:00'},{'state':'released','run_id':'e2','command':COMMAND,'timestamp':'2026-01-01T00:00:01+00:00','outcome':'normal'}])
+   got=run_e2_evaluation(EvaluationArgs(root,checkpoint,sidecar,metrics,final,ip,root,root/'teacher',root/'imagenette','e2',root/'leases'),runtime_factory=lambda *_,**__:(Model(),None,None,None),lease_factory=Lease,torch_module=LiveTorch,admit=lambda **_:proof,writer=write,lease_event_loader=lambda *_:[{'state':'acquired','run_id':'e2','command':COMMAND,'pid':__import__('os').getpid(),'timestamp':'2026-01-01T00:00:00+00:00'},{'state':'released','run_id':'e2','command':COMMAND,'pid':__import__('os').getpid(),'timestamp':'2026-01-01T00:00:01+00:00','outcome':'normal'}])
   finally:admission_module.admit_completed_checkpoint=original
   assert got['status']==READY, got['limitations']
   assert got['lease_events'][-1]['outcome']=='normal' and len(got['raw_maps']['map_paths'])==19
