@@ -27,7 +27,7 @@
 
 ## 선택 논리
 
-E2는 고해상도 타일링 경로로 border 80 px를 시도했고 관측 유효영역은 60 px였습니다. E1/E2의 경계·시임 응답을 계층적 비가중 규칙으로 검사한 결과, E2의 시임 검증이 안정 기준을 만족하지 못했습니다. 따라서 동결된 선택은 **E1**입니다. 이 선택은 성능 우위 주장이 아니라 검증 규칙에 따른 입력 경로 선택입니다.
+E2는 고해상도 타일링 경로로 map border 80 px를 시도한 뒤 두 번째 경험적 border 60 px로 재측정했습니다. 재측정 결과는 `REVISION_UNSTABLE_RETAIN_E1` 상태였고, E1/E2의 경계·시임 응답을 계층적 비가중 규칙으로 검사한 결과 E2의 시임 검증은 안정 기준을 만족하지 못했습니다. 따라서 동결된 선택은 **E1**입니다. 이 선택은 성능 우위 주장이 아니라 검증 규칙에 따른 입력 경로 선택입니다.
 
 ## 한계
 
@@ -52,6 +52,12 @@ export SIDECAR="$CHECKPOINT.json"
 export METRICS="$ARTIFACT_ROOT/g002-metrics-$RUN_ID.json"
 export FINAL_ATTEMPT=/path/to/final-attempt.json
 export TRAINING_IDENTITY=/path/to/training-identity.json
+export E1_MANIFEST="$ARTIFACT_ROOT/g002-validation-raw-maps-$RUN_ID.json"
+export PRETEST_FREEZE_SHA256=a2edec773c773d5a006b87da81633f790b68b33de3050044e7bb0cd0d2a25d67
+export PRETEST_FREEZE="$ARTIFACT_ROOT/g002-e2-pretest-freeze-$RUN_ID-$PRETEST_FREEZE_SHA256.json"
+export GEOMETRY_EVIDENCE="$PRETEST_FREEZE"
+export GEOMETRY_EVIDENCE_SHA256="$(sha256sum "$GEOMETRY_EVIDENCE" | awk '{print $1}')"
+export GEOMETRY_DECISION_ID=DEC-GEO-002
 ```
 
 E1 검증 맵을 생성합니다.
@@ -76,8 +82,22 @@ PYTHONPATH=src python3 -m fine_defect_ad.g002_e2_runtime \
   --lease-directory "$LEASE_DIRECTORY" --run-id "$RUN_ID"
 ```
 
-보정은 E2 동결 증거가 선택한 매니페스트와 동일한 기하 증거를 사용해야 합니다. 인자 확인은 다음으로 검증할 수 있습니다.
+보정은 E2 동결 증거가 선택한 E1 매니페스트와 동일한 기하 증거를 사용해야 합니다. 다음 Bash 명령은 먼저 CPU 전용 post-selection 결속을 생성한 뒤, 그 결속으로 원시 임계값을 보정합니다.
 
 ```bash
-PYTHONPATH=src python3 -m fine_defect_ad.g002_calibration --help
+CALIBRATION_ARGS=(
+  --artifact-root "$ARTIFACT_ROOT" --run-id "$RUN_ID"
+  --raw-map-manifest "$E1_MANIFEST" --training-identity "$TRAINING_IDENTITY"
+  --checkpoint "$CHECKPOINT" --sidecar "$SIDECAR" --metrics "$METRICS"
+  --final-attempt "$FINAL_ATTEMPT" --dataset-root "$DATASET_ROOT"
+  --geometry-evidence "$GEOMETRY_EVIDENCE"
+  --geometry-evidence-sha256 "$GEOMETRY_EVIDENCE_SHA256"
+  --geometry-decision-id "$GEOMETRY_DECISION_ID" --pretest-freeze "$PRETEST_FREEZE"
+)
+BINDING_JSON="$(PYTHONPATH=src python3 -m fine_defect_ad.g002_calibration \
+  "${CALIBRATION_ARGS[@]}" --build-post-selection-binding)"
+export POST_SELECTION_BINDING="$(printf '%s' "$BINDING_JSON" | \
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"])')"
+PYTHONPATH=src python3 -m fine_defect_ad.g002_calibration \
+  "${CALIBRATION_ARGS[@]}" --post-selection-binding "$POST_SELECTION_BINDING"
 ```
