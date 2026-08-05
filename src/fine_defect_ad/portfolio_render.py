@@ -79,7 +79,7 @@ def _preview(entries: list[dict], artifact_root: Path, dataset_root: Path, outpu
         heatmap=Image.fromarray(red); overlay=Image.blend(image,heatmap,.45)
         canvas=Image.new('RGB',(768,256)); canvas.paste(image,(0,0)); canvas.paste(heatmap,(256,0)); canvas.paste(overlay,(512,0))
         name=f'{rank}-{Path(row["image_identity"]).stem}.png'; canvas.save(output/name)
-        result.append({'tag':rank,'file':name,'image_identity':row['image_identity'],'source_sha256':row['source_sha256'],'map_sha256':row['map_sha256'],'max_raw_score':row['max_raw_score'],'threshold':threshold,'split':'validation-good','selected_geometry':'E1','model':'EfficientAD-S','run_id':run_id,'redistribution':'PUBLIC_REDISTRIBUTION_NOT_VERIFIED'})
+        result.append({'tag':rank,'file':name,'preview_sha256':_sha(output/name),'image_identity':row['image_identity'],'source_sha256':row['source_sha256'],'map_sha256':row['map_sha256'],'max_raw_score':row['max_raw_score'],'threshold':threshold,'split':'validation-good','selected_geometry':'E1','model':'EfficientAD-S','run_id':run_id,'redistribution':'PUBLIC_REDISTRIBUTION_NOT_VERIFIED'})
     metadata={'schema':'portfolio-preview/v1','redistribution':'PUBLIC_REDISTRIBUTION_NOT_VERIFIED','previews':result}
     (output/'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
     return metadata
