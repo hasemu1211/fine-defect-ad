@@ -43,6 +43,15 @@ def test_contract_blocks_comparator_and_reports_empty_masks(tmp_path):
     assert result["output"] is None
 
 
+def test_compact_output_omits_large_curve_arrays(tmp_path):
+    verified = EvaluatorSource(tmp_path, "root", None, {"pro_curve_util.py": "pinned"})
+    with patch("fine_defect_ad.mvtec_aupro.verify_evaluator", return_value=verified), patch(
+        "fine_defect_ad.mvtec_aupro._official_functions", return_value=(lambda x, y, x_max: 0.025, lambda *_: (__import__("numpy").array([0., .05]), __import__("numpy").array([0., 1.])))
+    ):
+        result = local_au_pro_0_05([[[0., 1.], [2., 3.]]], [[[0, 1], [0, 0]]], tmp_path, include_curve=False)
+    assert result["output"] == {"au_pro_0_05": .5, "curve_points": 2}
+
+
 def test_known_arrays_lock_official_au_pro_0_05(evaluator_archive, tmp_path):
     assert verify_evaluator(evaluator_archive).archive_sha256 == hashlib.sha256(evaluator_archive.read_bytes()).hexdigest()
     anomaly_map = [[0.0] * 5 for _ in range(5)]

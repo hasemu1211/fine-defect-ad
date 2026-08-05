@@ -145,7 +145,7 @@ def _official_functions(verified: EvaluatorSource):
         return _load_module("mvtec_ad_v1_generic", root / "generic_util.py").trapezoid, _load_module("mvtec_ad_v1_pro", root / "pro_curve_util.py").compute_pro
 
 
-def local_au_pro_0_05(anomaly_maps: Sequence[Any], ground_truth_maps: Sequence[Any | None], evaluator: Path) -> dict[str, Any]:
+def local_au_pro_0_05(anomaly_maps: Sequence[Any], ground_truth_maps: Sequence[Any | None], evaluator: Path, *, include_curve: bool = True) -> dict[str, Any]:
     """Run only the official local PRO path; no comparator or threshold metrics."""
     verified = verify_evaluator(evaluator)
     if len(anomaly_maps) != len(ground_truth_maps) or not anomaly_maps:
@@ -186,7 +186,10 @@ def local_au_pro_0_05(anomaly_maps: Sequence[Any], ground_truth_maps: Sequence[A
     trapezoid, compute_pro = _official_functions(verified)
     fprs, pros = compute_pro(predictions, ground_truth)
     au_pro = float(trapezoid(fprs, pros, x_max=INTEGRATION_LIMIT) / INTEGRATION_LIMIT)
-    return {**record, "empty_mask_behavior": "OFFICIAL_UTILITY_EXECUTED", "output": {"au_pro_0_05": au_pro, "fpr": fprs.tolist(), "pro": pros.tolist()}}
+    output = {"au_pro_0_05": au_pro, "curve_points": int(len(fprs))}
+    if include_curve:
+        output.update({"fpr": fprs.tolist(), "pro": pros.tolist()})
+    return {**record, "empty_mask_behavior": "OFFICIAL_UTILITY_EXECUTED", "output": output}
 
 
 evaluate_local_au_pro_0_05 = local_au_pro_0_05

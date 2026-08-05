@@ -93,6 +93,56 @@ def _final(root: Path, run_id: str, record: dict[str, Any], *, admit: Any, write
     return {**record, "artifact": str(path), "artifact_sha256": digest}
 
 
+def evaluate_persisted_test_public(*, artifact_root: Path, dataset_root: Path, raw_manifest: Path,
+                                   evaluator: Path, run_id: str, admit: Any = preflight,
+                                   writer: Any = atomic_write) -> dict[str, Any]:
+    """Compute local AU-PRO from the already immutable public-test raw maps only."""
+    import numpy as np
+    from anomalib.data.utils.image import read_mask
+    from torchvision.transforms import InterpolationMode
+    from torchvision.transforms.v2 import Resize
+
+    root = Path(artifact_root).resolve(); manifest_path = Path(raw_manifest).resolve()
+    if manifest_path.parent != root: raise ValueError("raw manifest must be directly under artifact root")
+    try: manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc: raise ValueError("invalid public-test raw-map manifest") from exc
+    if manifest.get("status") != "TEST_PUBLIC_RAW_MAPS_ONLY" or manifest.get("selected_measurement") != "E1":
+        raise ValueError("only the frozen E1 public-test raw map manifest is accepted")
+    rows, current = manifest.get("maps"), test_public_entries(dataset_root)
+    if not isinstance(rows, list) or len(rows) != len(current): raise ValueError("public-test raw map count mismatch")
+    lineage = manifest.get("lineage")
+    expected_lineage = {"checkpoint_sha256", "sidecar_sha256", "metrics_sha256", "final_attempt_sha256", "identity_sha256", "pilot_sha256", "freeze_sha256", "post_selection_binding_sha256"}
+    if not isinstance(lineage, Mapping) or set(lineage) != expected_lineage or any(not isinstance(value, str) or len(value) != 64 for value in lineage.values()):
+        raise ValueError("public-test lineage mismatch")
+    resize = Resize((256, 256), interpolation=InterpolationMode.BILINEAR, antialias=True)
+    maps, masks = [], []
+    for index, (row, entry) in enumerate(zip(rows, current)):
+        if not isinstance(row, Mapping) or any(row.get(key) != entry[key] for key in ("image_identity", "label", "source_sha256", "mask_sha256")):
+            raise ValueError("public-test source or mask identity/hash mismatch")
+        if row.get("checkpoint_sha256") != lineage["checkpoint_sha256"] or row.get("dtype") != "<f4" or row.get("byte_order") != "<":
+            raise ValueError("public-test map provenance mismatch")
+        shape = row.get("shape")
+        if not isinstance(shape, list) or shape != [1, 1, 256, 256]: raise ValueError("public-test map shape mismatch")
+        digest = row.get("map_sha256")
+        if not isinstance(digest, str) or len(digest) != 64: raise ValueError("public-test map hash missing")
+        path = root / f"g002-test-public-raw-{index:03d}-{digest}.bin"
+        raw = path.read_bytes()
+        if sha256(raw).hexdigest() != digest or len(raw) != 256 * 256 * 4: raise ValueError("public-test raw-map bytes/hash mismatch")
+        maps.append(np.frombuffer(raw, dtype="<f4").reshape(256, 256))
+        masks.append(None if entry["mask"] is None else _array(resize(read_mask(entry["mask"], as_tensor=True))).squeeze())
+    started = time.monotonic()
+    metric = local_au_pro_0_05(maps, masks, evaluator, include_curve=False)
+    record = new_evidence(run_id, "g002-eval-test-public-au-pro-0.05", READY, [])
+    record.update({"protocol": "TEST_PUBLIC_RAW_MAPS_ONLY_NO_SELECTION_OR_CALIBRATION_MUTATION",
+                   "counts": {"good": GOOD_COUNT, "bad": BAD_COUNT, "total": GOOD_COUNT + BAD_COUNT},
+                   "selected_measurement": "E1", "raw_manifest": str(manifest_path),
+                   "raw_manifest_sha256": _hash(manifest_path), "lineage": dict(lineage),
+                   "mask_transform_identity": TRANSFORM_IDENTITY, "local_au_pro": metric,
+                   "comparator": None, "threshold_metrics": "BLOCKED_NO_VERIFIED_COMPARATOR",
+                   "timing_seconds": time.monotonic() - started})
+    return _final(root, run_id, record, admit=admit, writer=writer)
+
+
 def run_test_public(args: TestPublicArgs, *, runtime_factory: Any = _lazy_runtime, lease_factory: Any = GpuLease,
                     torch_module: Any | None = None, admit: Any = preflight, writer: Any = atomic_write,
                     lease_event_loader: Any = lease_events) -> dict[str, Any]:
