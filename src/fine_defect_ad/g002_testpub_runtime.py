@@ -143,6 +143,66 @@ def evaluate_persisted_test_public(*, artifact_root: Path, dataset_root: Path, r
     return _final(root, run_id, record, admit=admit, writer=writer)
 
 
+def evaluate_persisted_split_test_public(*, artifact_root: Path, dataset_root: Path, raw_manifest: Path,
+                                         split_freeze: Path, evaluator: Path, run_id: str,
+                                         admit: Any = preflight, writer: Any = atomic_write) -> dict[str, Any]:
+    """The sole post-freeze split-E2 AU-PRO calculation (no tuning inputs)."""
+    import numpy as np
+    from anomalib.data.utils.image import read_mask
+    from torchvision.transforms import InterpolationMode
+    from torchvision.transforms.v2 import Resize
+    from .g002_e2_runtime import SPLIT_DECISION_ID, SPLIT_TARGET_SHAPE, verify_split_freeze
+
+    root, manifest_path, freeze_path = Path(artifact_root).resolve(), Path(raw_manifest).resolve(), Path(split_freeze).resolve()
+    if manifest_path.parent != root or freeze_path.parent != root:
+        raise ValueError("split TESTpub artifacts must be directly under artifact root")
+    # A persistent evidence record is the one-shot latch.  It is checked before
+    # masks/maps are read, so a failed/follow-up invocation cannot tune on test.
+    if any(root.glob("g002-e2-split-testpub-evidence-*.json")):
+        raise ValueError("split TESTpub has already been accessed")
+    try:
+        freeze = json.loads(freeze_path.read_text(encoding="utf-8")); manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid split freeze or raw-map manifest") from exc
+    verify_split_freeze(freeze)
+    if freeze.get("decision_id") != SPLIT_DECISION_ID:
+        raise ValueError("wrong split decision")
+    rows, entries = manifest.get("maps"), test_public_entries(dataset_root)
+    if manifest.get("status") != "SPLIT_E2_TEST_PUBLIC_RAW_MAPS" or not isinstance(rows, list) or len(rows) != len(entries):
+        raise ValueError("invalid split TESTpub map manifest")
+    maps, masks = [], []
+    resize = Resize(SPLIT_TARGET_SHAPE, interpolation=InterpolationMode.NEAREST)
+    for index, (row, entry) in enumerate(zip(rows, entries)):
+        if not isinstance(row, Mapping) or any(row.get(k) != entry[k] for k in ("image_identity", "label", "source_sha256", "mask_sha256")):
+            raise ValueError("split TESTpub identity/hash mismatch")
+        if row.get("shape") != list(SPLIT_TARGET_SHAPE) or row.get("dtype") != "<f4" or row.get("byte_order") != "<":
+            raise ValueError("split TESTpub map geometry invalid")
+        digest = row.get("map_sha256")
+        path = root / f"g002-e2-split-test-public-raw-{index:03d}-{digest}.bin"
+        raw = path.read_bytes()
+        if not isinstance(digest, str) or sha256(raw).hexdigest() != digest or len(raw) != SPLIT_TARGET_SHAPE[0] * SPLIT_TARGET_SHAPE[1] * 4:
+            raise ValueError("split TESTpub map bytes/hash invalid")
+        maps.append(np.frombuffer(raw, dtype="<f4").reshape(SPLIT_TARGET_SHAPE))
+        masks.append(None if entry["mask"] is None else _array(resize(read_mask(entry["mask"], as_tensor=True))).squeeze())
+    metric = local_au_pro_0_05(maps, masks, evaluator, include_curve=False)
+    value = float(metric["au_pro_0.05"] if isinstance(metric, Mapping) and "au_pro_0.05" in metric else metric)
+    record = new_evidence(run_id, "g002-eval-test-public-e2-split-au-pro-0.05", READY, [])
+    record.update({"protocol": "POST_HOC_PIPELINE_CORRECTION__ONE_SHOT_TESTPUB__NO_TUNING", "decision_id": SPLIT_DECISION_ID,
+                   "split_freeze_sha256": _hash(freeze_path), "raw_manifest_sha256": _hash(manifest_path),
+                   "counts": {"good": GOOD_COUNT, "bad": BAD_COUNT, "total": GOOD_COUNT + BAD_COUNT},
+                   "map_shape": list(SPLIT_TARGET_SHAPE), "local_au_pro": metric,
+                   "eligible_for_portfolio_rewrite": value > 0.02058176590668011})
+    payload, digest = immutable_json(record)
+    # Distinct name avoids changing historical E1 evidence.
+    source = f"immutable split TESTpub evidence bytes={len(payload)} sha256={digest}"
+    proof = admit(run_id=run_id, allocations=[Allocation("artifact", len(payload), "persistent", source, "g002-e2-split-testpub-evidence"), Allocation("artifact", len(payload), "transient", source, "g002-e2-split-testpub-evidence-incoming")], reserve_bytes=len(payload), reserve_evidence={"max_pending_atomic_write_bytes": len(payload), "measured_high_water_bytes": 0, "runtime_or_source_citation": source})
+    target = root / f"g002-e2-split-testpub-evidence-{run_id}-{digest}.json"
+    result = writer(target, payload, proof=proof, run_id=run_id, overwrite=False)
+    if result.get("status") != READY or target.read_bytes() != payload:
+        raise ValueError("split TESTpub evidence write failed")
+    return {**record, "artifact": str(target), "artifact_sha256": digest}
+
+
 def run_test_public(args: TestPublicArgs, *, runtime_factory: Any = _lazy_runtime, lease_factory: Any = GpuLease,
                     torch_module: Any | None = None, admit: Any = preflight, writer: Any = atomic_write,
                     lease_event_loader: Any = lease_events) -> dict[str, Any]:

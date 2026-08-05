@@ -185,3 +185,47 @@ def test_revision_uses_actual_uniform_map_border_and_retains_e1(monkeypatch):
  assert captured and captured[0] == (80,80)
  rows=[{'image_identity':'validation/good/a.png','family':f,'case':f,'polarity':'black_endpoint','response_interval':[1.,1.], 'normal_repeatability':0.,'response_repeatability':.1,'cross_origin_normal_disagreement':0.,'cross_origin_response_disagreement':0.,'recipe_sha256':'r'*64,'probe_content_sha256':'p'*64} for f in ('impulse','seam_crossing_line')]
  assert module.select_e1_or_e2(e1=measured(rows), e2={**measured(rows), 'revision':{'e2_eligible':False}})['selected'] == 'E1'
+
+
+def test_split_branch_hann_terminal_coverage_and_fresh_quantiles():
+ from fine_defect_ad.g002_e2_runtime import _split_boxes, periodic_hann_weights, split_quantiles
+ shape=(480, 560); boxes=_split_boxes(shape)
+ assert boxes[-1] == (224, 304, 480, 560)
+ coverage=np.zeros(shape, np.float64)
+ for box in boxes:
+  weight=periodic_hann_weights(box, shape)
+  assert weight.shape == (256,256) and weight.min() > 0
+  y,x,y2,x2=box;coverage[y:y2,x:x2] += weight
+ assert coverage.min() > 0
+ q=split_quantiles([np.arange(100,dtype=np.float32)], [np.arange(100,dtype=np.float32)+.5])
+ assert q['qb_st'] > q['qa_st'] and q['qb_stae'] > q['qa_stae']
+
+
+def test_split_branch_local_matches_get_maps_st_and_never_calls_ae_per_tile():
+ torch=pytest.importorskip('torch')
+ import torch.nn.functional as F
+ from fine_defect_ad.g002_e2_runtime import local_st_map
+ class Core:
+  teacher_out_channels=2;pad_maps=True;mean_std={'mean':torch.zeros(1,2,1,1),'std':torch.ones(1,2,1,1)}
+  def __init__(self): self.ae_calls=0
+  def is_set(self, _): return True
+  def teacher(self,x): return torch.cat((x[:,:1],x[:,1:2]),1)
+  def student(self,x): return torch.cat((x[:,:1]+1,x[:,1:2]-1,x[:,:1],x[:,1:2]),1)
+  def ae(self,*_): self.ae_calls += 1; raise AssertionError('AE must not run for local ST')
+  def get_maps(self,x,normalize=False):
+   t=self.teacher(x);s=self.student(x);st=(t-s[:,:2]).square().mean(1,keepdim=True)
+   return F.interpolate(F.pad(st,(4,4,4,4)),size=x.shape[-2:],mode='bilinear'), torch.zeros_like(x[:,:1])
+ core=Core();tile=torch.rand(1,3,256,256)
+ assert torch.equal(local_st_map(tile, core, torch), core.get_maps(tile, normalize=False)[0]) and core.ae_calls == 0
+
+
+def test_split_freeze_binds_fresh_maps_geometry_and_new_decision():
+ from fine_defect_ad.g002_e2_runtime import freeze_split_validation, split_quantiles, verify_split_freeze
+ with TemporaryDirectory() as d:
+  gate=admitted(Path(d), size=(256,256)); local=[np.arange(100,dtype=np.float32)+i for i in range(19)]; global_=[x+.25 for x in local]
+  rows=[]
+  for (identity, source), st, stae in zip(gate.validation_identities, local, global_):
+   rows.append({'image_identity':identity,'source_sha256':source,'local_st_sha256':sha256(st.tobytes()).hexdigest(),'global_stae_sha256':sha256(stae.tobytes()).hexdigest(),'_local_st':st,'_global_stae':stae})
+  frozen=freeze_split_validation(admitted=gate,quantiles=split_quantiles(local,global_),map_rows=rows,geometry={'tile':256,'stride':128,'weight_min':.1})
+  verify_split_freeze(frozen)
+  assert frozen['decision_id'] != 'DEC-GEO-002' and frozen['status'] == 'READY'

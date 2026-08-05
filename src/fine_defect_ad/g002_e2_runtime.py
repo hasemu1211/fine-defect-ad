@@ -427,3 +427,205 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# DEC-SPLIT-003 is intentionally separate from DEC-GEO-002.  The latter is
+# historical E1 evidence and must remain reproducible.
+SPLIT_DECISION_ID = "DEC-SPLIT-003"
+SPLIT_STRIDE = 128
+SPLIT_TARGET_SHAPE = (528, 2112)  # H, W: half of the studied sheet-metal size
+
+
+def _split_boxes(shape: tuple[int, int]) -> tuple[tuple[int, int, int, int], ...]:
+    """Return deterministic 256px terminal tiles at 128px stride."""
+    h, w = map(int, shape)
+    if min(h, w) < TILE:
+        raise ValueError("split branch requires source dimensions >= 256")
+    ys = list(range(0, h - TILE + 1, SPLIT_STRIDE))
+    xs = list(range(0, w - TILE + 1, SPLIT_STRIDE))
+    if ys[-1] != h - TILE:
+        ys.append(h - TILE)
+    if xs[-1] != w - TILE:
+        xs.append(w - TILE)
+    return tuple((y, x, y + TILE, x + TILE) for y in ys for x in xs)
+
+
+def periodic_hann_weights(box: tuple[int, int, int, int], shape: tuple[int, int]):
+    """Positive, separable periodic-Hann tile weights, including image edges."""
+    np = _np()
+    y, x, y2, x2 = box
+    h, w = map(int, shape)
+    if (y2 - y, x2 - x) != (TILE, TILE):
+        raise ValueError("split tile must be exactly 256x256")
+    # Half-sample periodic Hann has no zero samples.  Edge variants retain the
+    # same taper on overlaps while making the physical image boundary constant.
+    axis = np.sin(np.pi * (np.arange(TILE, dtype=np.float64) + 0.5) / TILE) ** 2
+    wy, wx = axis.copy(), axis.copy()
+    if y == 0: wy[0] = 1.0
+    if y2 == h: wy[-1] = 1.0
+    if x == 0: wx[0] = 1.0
+    if x2 == w: wx[-1] = 1.0
+    weight = wy[:, None] * wx[None, :]
+    if not bool(np.isfinite(weight).all()) or float(weight.min()) <= 0:
+        raise ValueError("split Hann weights must be finite and positive")
+    return weight
+
+
+def _core_model(model: Any) -> Any:
+    """Accept either the Lightning wrapper or its EfficientAD torch module."""
+    return getattr(model, "model", model)
+
+
+def local_st_map(tile: Any, model: Any, torch: Any):
+    """Exact EfficientAD raw ST branch only; AE is deliberately never called."""
+    core = _core_model(model)
+    import torch.nn.functional as F
+    with torch.inference_mode():
+        teacher = core.teacher(tile)
+        if core.is_set(core.mean_std):
+            teacher = (teacher - core.mean_std["mean"]) / core.mean_std["std"]
+        student = core.student(tile)
+        distance = (teacher - student[:, :core.teacher_out_channels]) ** 2
+        value = distance.mean(dim=1, keepdim=True)
+        if core.pad_maps:
+            value = F.pad(value, (4, 4, 4, 4))
+        return F.interpolate(value, size=tile.shape[-2:], mode="bilinear")
+
+
+def global_stae_map(canonical_tile: Any, model: Any, torch: Any):
+    """Exact EfficientAD raw STAE branch once on the canonical 256px image."""
+    core = _core_model(model)
+    import torch.nn.functional as F
+    with torch.inference_mode():
+        student = core.student(canonical_tile)
+        ae = core.ae(canonical_tile, canonical_tile.shape[-2:])
+        value = ((ae - student[:, core.teacher_out_channels:]) ** 2).mean(dim=1, keepdim=True)
+        if core.pad_maps:
+            value = F.pad(value, (4, 4, 4, 4))
+        return F.interpolate(value, size=canonical_tile.shape[-2:], mode="bilinear")
+
+
+def canonical_256(rgb: Any, torch: Any, *, device: Any | None = None):
+    """Pinned RGB [0,1] -> 1x3x256x256 bilinear-antialias transform."""
+    import torch.nn.functional as F
+    np = _np()
+    array = np.asarray(rgb, dtype=np.float32)
+    if array.ndim != 3 or array.shape[2] != 3 or not bool(np.isfinite(array).all()):
+        raise ValueError("canonical transform requires finite HxWx3 RGB")
+    value = torch.from_numpy(np.ascontiguousarray(array.transpose(2, 0, 1))).unsqueeze(0)
+    if device is not None:
+        value = value.to(device)
+    return F.interpolate(value, size=(TILE, TILE), mode="bilinear", align_corners=False, antialias=True)
+
+
+def split_branch_raw_maps(rgb: Any, model: Any, torch: Any, *, device: Any | None = None):
+    """Produce stitched local ST and global canonical STAE maps without AE tiling."""
+    np = _np()
+    array = np.asarray(rgb, dtype=np.float32)
+    if array.ndim != 3 or array.shape[2] != 3 or not bool(np.isfinite(array).all()):
+        raise ValueError("split branch requires finite HxWx3 RGB")
+    h, w = array.shape[:2]
+    boxes = _split_boxes((h, w))
+    sums = np.zeros((h, w), dtype=np.float64)
+    weights = np.zeros((h, w), dtype=np.float64)
+    for box in boxes:
+        tile = _tile_tensor(array, box, torch)
+        if device is not None:
+            tile = tile.to(device)
+        value = _map2d(local_st_map(tile, model, torch))
+        y, x, y2, x2 = box
+        weight = periodic_hann_weights(box, (h, w))
+        sums[y:y2, x:x2] += value * weight
+        weights[y:y2, x:x2] += weight
+    if not bool(np.isfinite(weights).all()) or float(weights.min()) <= 0:
+        raise ValueError("split blend has incomplete or non-positive coverage")
+    local = (sums / weights).astype("<f4", copy=False)
+    global_map = _map2d(global_stae_map(canonical_256(array, torch, device=device), model, torch))
+    if not bool(np.isfinite(local).all()) or not bool(np.isfinite(global_map).all()):
+        raise ValueError("split branch maps must be finite")
+    return local, global_map, {"tile": TILE, "stride": SPLIT_STRIDE, "boxes": [list(box) for box in boxes],
+                               "blend": "separable_periodic_hann_positive_boundary_variants", "weight_min": float(weights.min()),
+                               "weight_max": float(weights.max())}
+
+
+def split_quantiles(local_maps: Iterable[Any], global_maps: Iterable[Any]) -> dict[str, float]:
+    """Fresh q90/q99.5 calibration; checkpoint quantiles are never consulted."""
+    np = _np()
+    def values(items: Iterable[Any], name: str) -> tuple[float, float]:
+        data = [np.asarray(item, dtype=np.float32).ravel() for item in items]
+        if not data:
+            raise ValueError(f"{name} validation maps required")
+        joined = np.concatenate(data)
+        if not bool(np.isfinite(joined).all()):
+            raise ValueError(f"{name} validation maps must be finite")
+        qa, qb = float(np.quantile(joined, .90)), float(np.quantile(joined, .995))
+        if not np.isfinite(qa) or not np.isfinite(qb) or not qb > qa:
+            raise ValueError(f"{name} q99.5 must be greater than q90")
+        return qa, qb
+    qa_st, qb_st = values(local_maps, "local_st")
+    qa_ae, qb_ae = values(global_maps, "global_stae")
+    return {"qa_st": qa_st, "qb_st": qb_st, "qa_stae": qa_ae, "qb_stae": qb_ae}
+
+
+def combine_split_maps(local: Any, global_map: Any, quantiles: Mapping[str, float], torch: Any):
+    """Apply the pinned EfficientAD normalization, resize to 2112x528, average."""
+    import torch.nn.functional as F
+    np = _np()
+    needed = ("qa_st", "qb_st", "qa_stae", "qb_stae")
+    if set(needed) - set(quantiles):
+        raise ValueError("split quantiles incomplete")
+    if not all(np.isfinite(float(quantiles[k])) for k in needed) or not float(quantiles["qb_st"]) > float(quantiles["qa_st"]) or not float(quantiles["qb_stae"]) > float(quantiles["qa_stae"]):
+        raise ValueError("split quantiles invalid")
+    def resize(value: Any, qa: float, qb: float):
+        array = np.asarray(value, dtype=np.float32)
+        item = torch.from_numpy(np.ascontiguousarray(array)).reshape(1, 1, *array.shape)
+        item = .1 * (item - qa) / (qb - qa)
+        return F.interpolate(item, size=SPLIT_TARGET_SHAPE, mode="bilinear", align_corners=False).squeeze().detach().cpu().numpy()
+    st = resize(local, float(quantiles["qa_st"]), float(quantiles["qb_st"]))
+    stae = resize(global_map, float(quantiles["qa_stae"]), float(quantiles["qb_stae"]))
+    result = np.ascontiguousarray(.5 * (st + stae), dtype="<f4")
+    if result.shape != SPLIT_TARGET_SHAPE or not bool(np.isfinite(result).all()):
+        raise ValueError("split output must be finite 528x2112")
+    return result
+
+
+def freeze_split_validation(*, admitted: AdmittedCheckpoint, quantiles: Mapping[str, float], map_rows: Iterable[Mapping[str, Any]], geometry: Mapping[str, Any]) -> dict[str, Any]:
+    """Create the immutable, validation-only admission record for split E2.
+
+    This is deliberately a READY gate, not a model-selection comparison: no
+    TESTpub-derived value is accepted anywhere in its inputs.
+    """
+    rows = [dict(row) for row in map_rows]
+    expected = dict(admitted.validation_identities)
+    if len(rows) != 19 or {row.get("image_identity") for row in rows} != set(expected):
+        raise ValueError("exactly the admitted 19 validation/good maps are required")
+    for row in rows:
+        if row.get("source_sha256") != expected[row["image_identity"]] or not isinstance(row.get("local_st_sha256"), str) or not isinstance(row.get("global_stae_sha256"), str):
+            raise ValueError("validation source/map hash binding invalid")
+    # Re-run the validation rather than trusting a serialized q value.
+    checked = split_quantiles([row["_local_st"] for row in rows], [row["_global_stae"] for row in rows])
+    if dict(quantiles) != checked:
+        raise ValueError("validation quantiles are not the fresh raw-map quantiles")
+    if not isinstance(geometry, Mapping) or geometry.get("tile") != TILE or geometry.get("stride") != SPLIT_STRIDE or float(geometry.get("weight_min", 0)) <= 0:
+        raise ValueError("split geometry gate invalid")
+    maps = [{k: v for k, v in row.items() if not k.startswith("_")} for row in rows]
+    payload = {"stage": "PRE_TEST_FREEZE", "status": "READY", "decision_id": SPLIT_DECISION_ID,
+               "checkpoint_sha256": admitted.checkpoint_sha256, "sidecar_sha256": admitted.sidecar_sha256,
+               "metrics_sha256": admitted.metrics_sha256, "final_attempt_sha256": admitted.final_attempt_sha256,
+               "identity_sha256": admitted.identity_sha256, "pilot_sha256": admitted.pilot_sha256,
+               "validation_identities": [{"path": p, "sha256": s} for p, s in admitted.validation_identities],
+               "geometry": dict(geometry), "quantiles": checked, "maps": maps,
+               "code_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
+               "protocol": "SPLIT_ST_SOURCE_RESOLUTION__GLOBAL_STAE_CANONICAL_256__NO_TEST_ACCESS"}
+    return {**payload, "freeze_sha256": sha256(_canonical(payload)).hexdigest()}
+
+
+def verify_split_freeze(value: Mapping[str, Any]) -> None:
+    required = {"stage", "status", "decision_id", "checkpoint_sha256", "validation_identities", "geometry", "quantiles", "maps", "code_sha256", "freeze_sha256"}
+    if not required <= set(value) or value["stage"] != "PRE_TEST_FREEZE" or value["status"] != "READY" or value["decision_id"] != SPLIT_DECISION_ID:
+        raise ValueError("split validation freeze is incomplete")
+    if sha256(_canonical({k: v for k, v in value.items() if k != "freeze_sha256"})).hexdigest() != value["freeze_sha256"]:
+        raise ValueError("split validation freeze hash mismatch")
+    q = value["quantiles"]
+    if not isinstance(q, Mapping) or not float(q.get("qb_st", 0)) > float(q.get("qa_st", 0)) or not float(q.get("qb_stae", 0)) > float(q.get("qa_stae", 0)):
+        raise ValueError("split validation freeze quantiles invalid")
