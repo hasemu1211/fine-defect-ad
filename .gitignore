@@ -2,7 +2,10 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
+*.log
 data/
 artifacts/
 runs/
 .internal/
+.omx/
+.pytest_cache/
