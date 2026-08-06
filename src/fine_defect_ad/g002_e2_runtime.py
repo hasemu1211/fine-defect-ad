@@ -554,14 +554,19 @@ def split_branch_raw_maps(rgb: Any, model: Any, torch: Any, *, device: Any | Non
 def split_quantiles(local_maps: Iterable[Any], global_maps: Iterable[Any]) -> dict[str, float]:
     """Fresh q90/q99.5 calibration; checkpoint quantiles are never consulted."""
     np = _np()
+    def quantile(value: Any, q: float) -> float:
+        try:
+            return float(np.quantile(value, q, method="linear"))
+        except TypeError:
+            return float(np.quantile(value, q, interpolation="linear"))
     def values(items: Iterable[Any], name: str) -> tuple[float, float]:
         data = [np.asarray(item, dtype=np.float32).ravel() for item in items]
         if not data:
             raise ValueError(f"{name} validation maps required")
-        joined = np.concatenate(data)
+        joined = np.concatenate(data).astype(np.float32, copy=False)
         if not bool(np.isfinite(joined).all()):
             raise ValueError(f"{name} validation maps must be finite")
-        qa, qb = float(np.quantile(joined, .90)), float(np.quantile(joined, .995))
+        qa, qb = quantile(joined, .90), quantile(joined, .995)
         if not np.isfinite(qa) or not np.isfinite(qb) or not qb > qa:
             raise ValueError(f"{name} q99.5 must be greater than q90")
         return qa, qb

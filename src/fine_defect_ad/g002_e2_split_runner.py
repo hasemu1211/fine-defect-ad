@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Sequence
@@ -43,6 +44,28 @@ def _model(args: Any, torch: Any):
     return admitted, model
 
 
+def _failure_log_path(root: Path, run_id: str, payload: bytes) -> Path:
+    digest = sha256(payload).hexdigest()
+    return root / f"g002-e2-split-testpub-FAILED-{run_id}-{digest}.json"
+
+
+def _attempt_recovery(root: Path, run_id: str, latch_path: Path) -> dict[str, str] | None:
+    logs = sorted(root.glob(f"g002-e2-split-testpub-FAILED-{run_id}-*.json"))
+    if not logs:
+        return None
+    attempt_payload = {"attempt_latch_sha256": sha256(latch_path.read_bytes()).hexdigest(),
+                      "original_failure_log_sha256": sha256(logs[-1].read_bytes()).hexdigest(),
+                      "code_fix_commit": ""}
+    root_dir = Path(__file__).resolve().parents[2]
+    try:
+        attempt_payload["code_fix_commit"] = subprocess.check_output(["git", "-C", str(root_dir), "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        attempt_payload["code_fix_commit"] = os.environ.get("GIT_COMMIT", "unknown")
+    if not attempt_payload["code_fix_commit"]:
+        attempt_payload["code_fix_commit"] = "unknown"
+    return attempt_payload
+
+
 def run_validation(args: Any) -> dict[str, Any]:
     import numpy as np
     import torch
@@ -70,21 +93,30 @@ def run_test_public_once(args: Any) -> dict[str, Any]:
     import torch
     root=Path(args.artifact_root).resolve(); freeze_path=Path(args.split_freeze).resolve()
     freeze=json.loads(freeze_path.read_text()); verify_split_freeze(freeze)
-    if any(root.glob("g002-e2-split-testpub-ATTEMPTED-*")) or any(root.glob("g002-e2-split-testpub-evidence-*.json")):
+    latch_path = root / f"g002-e2-split-testpub-ATTEMPTED-{args.run_id}.json"
+    if any(root.glob("g002-e2-split-testpub-evidence-*.json")):
         raise ValueError("TESTpub one-shot already consumed")
+    if latch_path.exists() and not any(root.glob(f"g002-e2-split-testpub-FAILED-{args.run_id}-*.json")):
+        raise ValueError("TESTpub one-shot already consumed")
+    latch = latch_path if latch_path.exists() else _write(root,args.run_id,f"g002-e2-split-testpub-ATTEMPTED-{args.run_id}.json",_canon({"decision_id":SPLIT_DECISION_ID,"freeze_sha256":freeze["freeze_sha256"],"status":"ATTEMPTED"}))
     # The latch is persisted before the first test image is decoded.
-    latch=_write(root,args.run_id,f"g002-e2-split-testpub-ATTEMPTED-{args.run_id}.json",_canon({"decision_id":SPLIT_DECISION_ID,"freeze_sha256":freeze["freeze_sha256"],"status":"ATTEMPTED"}))
     if not torch.cuda.is_available(): raise RuntimeError("CUDA_UNAVAILABLE")
     with GpuLease(args.lease_directory,args.run_id,TEST_COMMAND):
         _admitted, model=_model(args,torch); rows=[]
-        for index, entry in enumerate(test_public_entries(args.dataset_root)):
-            local,global_,_geometry=split_branch_raw_maps(decode_rgb01(entry["source"]),model,torch,device=torch.device("cuda:0"))
-            value=combine_split_maps(local,global_,freeze["quantiles"],torch); raw=value.tobytes(); digest=sha256(raw).hexdigest()
-            _write(root,args.run_id,f"g002-e2-split-test-public-raw-{index:03d}-{digest}.bin",raw)
-            rows.append({"image_identity":entry["image_identity"],"label":entry["label"],"source_sha256":entry["source_sha256"],"mask_sha256":entry["mask_sha256"],"map_sha256":digest,"dtype":"<f4","byte_order":"<","shape":list(SPLIT_TARGET_SHAPE)})
-        manifest={"status":"SPLIT_E2_TEST_PUBLIC_RAW_MAPS","decision_id":SPLIT_DECISION_ID,"freeze_sha256":freeze["freeze_sha256"],"official_evaluator_sha256":sha256(Path(args.evaluator).read_bytes()).hexdigest(),"maps":rows}
-        manifest_path=_write(root,args.run_id,f"g002-e2-split-test-public-raw-maps-{args.run_id}.json",_canon(manifest))
-        result=evaluate_persisted_split_test_public(artifact_root=root,dataset_root=args.dataset_root,raw_manifest=manifest_path,split_freeze=freeze_path,evaluator=args.evaluator,run_id=args.run_id)
+        recovery = _attempt_recovery(root, args.run_id, latch_path)
+        try:
+            for index, entry in enumerate(test_public_entries(args.dataset_root)):
+                local,global_,_geometry=split_branch_raw_maps(decode_rgb01(entry["source"]),model,torch,device=torch.device("cuda:0"))
+                value=combine_split_maps(local,global_,freeze["quantiles"],torch); raw=value.tobytes(); digest=sha256(raw).hexdigest()
+                _write(root,args.run_id,f"g002-e2-split-test-public-raw-{index:03d}-{digest}.bin",raw)
+                rows.append({"image_identity":entry["image_identity"],"label":entry["label"],"source_sha256":entry["source_sha256"],"mask_sha256":entry["mask_sha256"],"map_sha256":digest,"dtype":"<f4","byte_order":"<","shape":list(SPLIT_TARGET_SHAPE)})
+            manifest={"status":"SPLIT_E2_TEST_PUBLIC_RAW_MAPS","decision_id":SPLIT_DECISION_ID,"freeze_sha256":freeze["freeze_sha256"],"official_evaluator_sha256":sha256(Path(args.evaluator).read_bytes()).hexdigest(),"maps":rows}
+            manifest_path=_write(root,args.run_id,f"g002-e2-split-test-public-raw-maps-{args.run_id}.json",_canon(manifest))
+            result=evaluate_persisted_split_test_public(artifact_root=root,dataset_root=args.dataset_root,raw_manifest=manifest_path,split_freeze=freeze_path,evaluator=args.evaluator,run_id=args.run_id,recovery=recovery)
+        except Exception as exc:
+            failure = _canon({"operation": TEST_COMMAND, "run_id": args.run_id, "failure": f"{type(exc).__name__}:{exc}", "decision_id": SPLIT_DECISION_ID})
+            _write(root, args.run_id, _failure_log_path(root, args.run_id, failure).name, failure)
+            raise
     return {**result,"attempt_latch":str(latch)}
 
 
