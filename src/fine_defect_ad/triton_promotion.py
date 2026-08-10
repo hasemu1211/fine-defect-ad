@@ -27,6 +27,8 @@ INPUT_NAME = "INPUT__0"
 OUTPUT_NAMES = ("OUTPUT__0", "OUTPUT__1")
 OUTPUT_SEMANTICS = {"OUTPUT__0": "map_st", "OUTPUT__1": "map_stae"}
 INPUT_SHAPE = (1, 3, 256, 256)
+MAX_BATCH_SIZE = 8
+TILE_BATCH_SIZE = 4
 INSPECTION_UNAVAILABLE = "INSPECTION_UNAVAILABLE"
 
 
@@ -36,13 +38,13 @@ class TritonConfig:
     input_name: str = INPUT_NAME
     output_names: tuple[str, str] = OUTPUT_NAMES
     input_shape: tuple[int, int, int, int] = INPUT_SHAPE
-    max_batch_size: int = 0
+    max_batch_size: int = MAX_BATCH_SIZE
     instance_count: int = 1
     dynamic_batching: bool = False
 
     def __post_init__(self) -> None:
-        if self.input_shape != INPUT_SHAPE or self.max_batch_size != 0 or self.instance_count != 1 or self.dynamic_batching:
-            raise ValueError("R2 requires fixed FP32 NCHW 1x3x256x256, one GPU instance, and no dynamic batching")
+        if self.input_shape != INPUT_SHAPE or self.max_batch_size != MAX_BATCH_SIZE or self.instance_count != 1 or self.dynamic_batching:
+            raise ValueError("R2 requires FP32 NCHW Bx3x256x256 (1<=B<=8), one GPU instance, and no dynamic batching")
         if len(self.output_names) != 2 or not all(self.output_names):
             raise ValueError("two raw EfficientAD branches are required")
 
@@ -67,11 +69,11 @@ def onnx_fallback_evidence(*, host_onnx_available: bool, image_backends: Iterabl
 def config_pbtxt(config: TritonConfig = TritonConfig()) -> str:
     """Minimal immutable model contract for the PyTorch backend."""
     return "\n".join((
-        f'name: "{config.model_name}"', 'platform: "pytorch_libtorch"', 'max_batch_size: 0',
-        f'input [{{ name: "{config.input_name}" data_type: TYPE_FP32 dims: [1, 3, 256, 256] }}]',
-        f'output [{{ name: "{config.output_names[0]}" data_type: TYPE_FP32 dims: [1, 1, 256, 256] }}]',
-        f'output [{{ name: "{config.output_names[1]}" data_type: TYPE_FP32 dims: [1, 1, 256, 256] }}]',
-        'instance_group [{ kind: KIND_GPU count: 1 }]', '',
+        f'name: "{config.model_name}"', 'platform: "pytorch_libtorch"', 'max_batch_size: 8',
+        f'input [{{ name: "{config.input_name}" data_type: TYPE_FP32 dims: [3, 256, 256] }}]',
+        f'output [{{ name: "{config.output_names[0]}" data_type: TYPE_FP32 dims: [1, 256, 256] }}]',
+        f'output [{{ name: "{config.output_names[1]}" data_type: TYPE_FP32 dims: [1, 256, 256] }}]',
+        'instance_group [{ kind: KIND_GPU count: 1 }]', 'parameters: { key: "DISABLE_OPTIMIZED_EXECUTION" value: { string_value: "true" } }', '',
     ))
 
 
@@ -165,8 +167,8 @@ def save_torchscript(model: Any, destination: Path, example: Any, *, proof: Pref
                      writer: Callable[..., Mapping[str, Any]] = atomic_write) -> dict[str, Any]:
     """Trace fixed-size raw branches, then atomically persist under an admitted proof."""
     import torch
-    if tuple(example.shape) != INPUT_SHAPE:
-        raise ValueError("TorchScript example must be fixed 1x3x256x256")
+    if example.ndim != 4 or tuple(example.shape[1:]) != INPUT_SHAPE[1:] or not 1 <= int(example.shape[0]) <= MAX_BATCH_SIZE:
+        raise ValueError("TorchScript example must be FP32 Bx3x256x256 for 1<=B<=8")
     # CUDA tracing in torch 2.7 decomposes interpolate into device-mismatched
     # clamp constants. Trace an isolated CPU copy; TorchScript remains movable.
     adapter = copy.deepcopy(fixed_256_adapter(model)).cpu()
@@ -215,6 +217,47 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
 
 
+def strict_decision(raw_map: Any, threshold: float) -> dict[str, Any]:
+    """Project strict comparator (`>`), not an MVTec-attributed rule."""
+    import math
+    import numpy as np
+    if not math.isfinite(float(threshold)): raise ValueError("finite frozen threshold required")
+    raw=np.asarray(raw_map,dtype=np.float32)
+    if raw.ndim < 2 or not np.isfinite(raw).all(): raise ValueError("finite raw map required")
+    mask=np.where(raw > float(threshold),255,0).astype(np.uint8)
+    return {"comparator":">","threshold":float(threshold),"image_anomalous":bool(mask.any()),"raw_sha256":sha256(raw.tobytes()).hexdigest(),"mask_sha256":sha256(mask.tobytes()).hexdigest(),"mask":mask}
+
+
+def numerical_stage(reference: Any, candidate: Any) -> dict[str, Any]:
+    """Raw ST/STAE diagnostics only; branch scores never receive an E2 threshold."""
+    import numpy as np
+    a,b=np.asarray(reference,dtype=np.float64),np.asarray(candidate,dtype=np.float64)
+    if a.shape != b.shape or not np.isfinite(a).all() or not np.isfinite(b).all(): return {"status":INSPECTION_UNAVAILABLE,"reason":"SHAPE_OR_FINITE"}
+    absolute=np.abs(a-b).ravel(); relative=absolute/np.maximum(np.abs(a).ravel(),np.finfo(np.float64).tiny);q=lambda values,p:_percentile(values.tolist(),p)
+    return {"status":"NUMERICAL_DIAGNOSTIC","max_abs":float(absolute.max()),"p99_abs":q(absolute,99),"p999_abs":q(absolute,99.9),"max_relative":float(relative.max()),"p99_relative":q(relative,99),"p999_relative":q(relative,99.9),"decision_contract":"NOT_APPLICABLE_RAW_BRANCH_DOMAIN"}
+
+
+def parity_stage(reference: Any, candidate: Any, *, threshold: float) -> dict[str, Any]:
+    """Final-map contract: same image verdict and no flips outside observed error band."""
+    import numpy as np
+    a,b=np.asarray(reference,dtype=np.float64),np.asarray(candidate,dtype=np.float64)
+    if a.shape != b.shape or not np.isfinite(a).all() or not np.isfinite(b).all(): return {"status":INSPECTION_UNAVAILABLE,"reason":"SHAPE_OR_FINITE"}
+    absolute=np.abs(a-b).ravel(); relative=absolute/np.maximum(np.abs(a).ravel(),np.finfo(np.float64).tiny); band=float(absolute.max())
+    left,right=strict_decision(a,threshold),strict_decision(b,threshold); changed=left["mask"] != right["mask"]; outside=(np.abs(a-threshold)>band)&(np.abs(b-threshold)>band); flips=int(np.count_nonzero(changed)); outside_flips=int(np.count_nonzero(changed&outside)); ambiguous=int(np.count_nonzero(~outside)); verdict_same=left["image_anomalous"]==right["image_anomalous"];q=lambda values,p:_percentile(values.tolist(),p)
+    return {"status":"PARITY_PASS" if verdict_same and outside_flips==0 else INSPECTION_UNAVAILABLE,"max_abs":band,"uncertainty_band":band,"p99_abs":q(absolute,99),"p999_abs":q(absolute,99.9),"max_relative":float(relative.max()),"p99_relative":q(relative,99),"p999_relative":q(relative,99.9),"decision_flips":flips,"decision_flips_outside_band":outside_flips,"threshold_near_ambiguous_count":ambiguous,"image_verdict_identical":verdict_same,"threshold":float(threshold),"diagnostic_torch_default":"record-only; not an acceptance cutoff"}
+
+
+def binary_infer(client: Any, array: Any) -> tuple[Any, Any]:
+    """Binary Triton HTTP transport; tritonclient is supplied by runtime tooling."""
+    import numpy as np
+    from tritonclient.http import InferInput, InferRequestedOutput
+    value=np.asarray(array,dtype=np.float32)
+    if value.ndim != 4 or tuple(value.shape[1:]) != INPUT_SHAPE[1:] or not 1 <= value.shape[0] <= MAX_BATCH_SIZE: raise ValueError("Batched FP32 NCHW contract required")
+    item=InferInput(INPUT_NAME,list(value.shape),"FP32");item.set_data_from_numpy(value,binary_data=True)
+    response=client.infer(MODEL_NAME,[item],outputs=[InferRequestedOutput(name,binary_data=True) for name in OUTPUT_NAMES])
+    return tuple(response.as_numpy(name) for name in OUTPUT_NAMES),response
+
+
 def _infer_v2(endpoint: str, tensor: list[float], *, timeout: float) -> dict[str, Any]:
     if len(tensor) != 1 * 3 * 256 * 256:
         raise ValueError("direct V2 tensor must contain exactly 1x3x256x256 FP32 values")
@@ -258,7 +301,7 @@ def unavailable_result(cause: str) -> dict[str, Any]:
 class PromotionArgs:
     artifact_root: Path; checkpoint: Path; metrics: Path; final_attempt: Path; training_identity: Path
     dataset_root: Path; teacher_small: Path; imagenette_root: Path; lease_directory: Path
-    source_image: Path; split_freeze: Path; run_id: str; http_port: int = 18000
+    source_image: Path; split_freeze: Path; run_id: str; calibration_artifact: Path; parity_manifest: Path; perf_analyzer: Path; perf_wheel_version: str; http_port: int = 18000
 
 
 def add_promotion_arguments(parser: Any) -> None:
@@ -268,6 +311,10 @@ def add_promotion_arguments(parser: Any) -> None:
     parser.add_argument("--source-image", type=Path, required=True)
     parser.add_argument("--split-freeze", type=Path, required=True)
     parser.add_argument("--http-port", type=int, default=18000)
+    parser.add_argument("--calibration-artifact", type=Path, required=True)
+    parser.add_argument("--parity-manifest", type=Path, required=True)
+    parser.add_argument("--perf-analyzer", type=Path, required=True)
+    parser.add_argument("--perf-wheel-version", required=True)
 
 
 def parse_promotion_args(argv: list[str] | None = None) -> PromotionArgs:
@@ -339,15 +386,19 @@ def _live_steps(args: PromotionArgs, proof: PreflightProof, probes: Mapping[str,
     rgb = decode_rgb01(source); tensor = canonical_256(rgb, torch, device=device)
     with torch.inference_mode(): eager = model.model.get_maps(tensor, normalize=False)
     exported = save_torchscript(model, model_path, tensor, proof=proof, run_id=args.run_id)
+    from .split_calibration import load_calibration_artifact
+    threshold, _calibration_sha256 = load_calibration_artifact(args.calibration_artifact, split_freeze=args.split_freeze, checkpoint_sha256=_admitted.checkpoint_sha256)
+    with torch.inference_mode():
+        adapter_maps=fixed_256_adapter(model).to(device)(tensor)
+        local_maps=torch.jit.load(str(model_path),map_location=device)(tensor)
+    stack=lambda values: np.concatenate([value.detach().cpu().numpy() for value in values],axis=1)
+    stages={"eager_to_adapter":numerical_stage(stack(eager),stack(adapter_maps)),"adapter_to_torchscript":numerical_stage(stack(adapter_maps),stack(local_maps))}
+    if any(value["status"] == INSPECTION_UNAVAILABLE for value in stages.values()):
+        return {"model":exported,"config_sha256":sha256(config_pbtxt().encode()).hexdigest(),"parity_stages":stages,"status":INSPECTION_UNAVAILABLE,"promotion_eligible":False,"cause":"LOCAL_PARITY_FAILED"}
     config_raw = config_pbtxt().encode(); outcome = atomic_write(config_path, config_raw, proof=proof, run_id=args.run_id, overwrite=False)
     if outcome.get("status") != READY or config_path.read_bytes() != config_raw: raise RuntimeError("CONFIG_WRITE_FAILED")
     name = f"fine-defect-r2-{args.run_id}"; logs = ""; server = None
     endpoint = f"http://127.0.0.1:{args.http_port}"
-    def request(tile: Any) -> tuple[dict[str, Any], float]:
-        data = tile.detach().cpu().numpy().astype(np.float32, copy=False).ravel().tolist()
-        payload = {"inputs":[{"name":INPUT_NAME,"shape":list(INPUT_SHAPE),"datatype":"FP32","data":data}],"outputs":[{"name":n} for n in OUTPUT_NAMES]}
-        began=time.perf_counter(); response=json.loads(urlopen(Request(endpoint+f"/v2/models/{MODEL_NAME}/infer",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"}),timeout=30).read()); elapsed=time.perf_counter()-began
-        return {row["name"]:np.asarray(row["data"],dtype=np.float32).reshape(row["shape"]) for row in response["outputs"]}, elapsed
     try:
         server = subprocess.Popen(["docker","run","--rm","--gpus","all","--name",name,"--network","host","--log-driver=none","-v",f"{repo}:/models:ro",IMAGE,"tritonserver","--model-repository=/models",f"--http-port={args.http_port}","--log-info=false"],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
         for _ in range(120):
@@ -356,23 +407,65 @@ def _live_steps(args: PromotionArgs, proof: PreflightProof, probes: Mapping[str,
                 if urlopen(endpoint+"/v2/health/ready",timeout=.5).status == 200: break
             except Exception: time.sleep(.25)
         else: raise RuntimeError("TRITON_READY_TIMEOUT")
+        from tritonclient.http import InferenceServerClient
+        client = InferenceServerClient(url=f"127.0.0.1:{args.http_port}")
+        def request(tile: Any) -> tuple[dict[str, Any], float]:
+            array = tile.detach().cpu().numpy().astype(np.float32, copy=False)
+            began=time.perf_counter(); outputs,_response=binary_infer(client,array); elapsed=time.perf_counter()-began
+            return dict(zip(OUTPUT_NAMES,outputs)),elapsed
         served, first = request(tensor)
-        tolerance={"atol":1e-5,"rtol":1.3e-6,"provenance":"PyTorch torch.testing.assert_close documented FP32 defaults"}
-        parity=parity_report(tuple(v.detach().cpu().numpy().tolist() for v in eager),tuple(served[n].tolist() for n in OUTPUT_NAMES),tolerance=tolerance)
-        base = {"model": exported, "config_sha256": sha256(config_raw).hexdigest(), "parity": {**parity, "first_request_seconds": first}}
-        if parity["status"] != "PARITY_PASS":
+        triton_values=np.concatenate([served[name] for name in OUTPUT_NAMES],axis=1)
+        parity=numerical_stage(stack(local_maps),triton_values)
+        stages["torchscript_to_triton"]=parity
+        base = {"model": exported, "config_sha256": sha256(config_raw).hexdigest(), "parity_stages": stages, "first_request_seconds": first}
+        if parity["status"] == INSPECTION_UNAVAILABLE:
             result = {**base, "status": INSPECTION_UNAVAILABLE, "promotion_eligible": False,
                       "cause": "TRITON_PARITY_FAILED", "benchmark": "SKIPPED_PARITY_FAILURE", "original_image_e2e": "SKIPPED_PARITY_FAILURE"}
             return result
-        flat=tensor.detach().cpu().numpy().astype(np.float32,copy=False).ravel().tolist()
-        benchmark=direct_client_benchmark(endpoint,flat,warmup_requests=2,samples_per_concurrency=10)
+        entries=parity_manifest_entries(Path(args.parity_manifest), Path(args.dataset_root))
+        timings: dict[str, dict[str, Any]] = {}
+        eager_maps: dict[str, Any] = {}; triton_maps: dict[str, Any] = {}
+        def combined_for(entry: Mapping[str, Any], mapper: Callable[[Any], tuple[Any, Any]], label: str) -> Any:
+            began=time.perf_counter(); full=decode_rgb01(entry["source"]); h,w=full.shape[:2]; sums=np.zeros((h,w),np.float64); weights=np.zeros((h,w),np.float64); calls=0
+            boxes=_split_boxes((h,w))
+            for group in batch_groups(boxes):
+                tiles=np.stack([np.ascontiguousarray(full[y:y2,x:x2].transpose(2,0,1)) for y,x,y2,x2 in group]); first,second=mapper(torch.from_numpy(tiles).to(device)); calls += 1
+                first=np.asarray(first)
+                for index,(y,x,y2,x2) in enumerate(group):
+                    weight=periodic_hann_weights((y,x,y2,x2),(h,w)); sums[y:y2,x:x2]+=first[index,0]*weight; weights[y:y2,x:x2]+=weight
+            _first,global_second=mapper(canonical_256(full,torch,device=device)); calls += 1
+            combined=combine_split_maps((sums/weights).astype("<f4"),np.asarray(global_second)[0,0],freeze["quantiles"],torch)
+            key=entry["path"]; timings.setdefault(key,{})[label]={"seconds":time.perf_counter()-began,"calls":calls,"raw_map_sha256":sha256(np.asarray(combined).tobytes()).hexdigest()}
+            return np.asarray(combined)
+        def eager_mapper(batch: Any) -> tuple[Any, Any]:
+            with torch.inference_mode(): values=model.model.get_maps(batch,normalize=False)
+            return tuple(value.detach().cpu().numpy() for value in values)
+        def triton_mapper(batch: Any) -> tuple[Any, Any]:
+            output,_elapsed=request(batch); return output[OUTPUT_NAMES[0]],output[OUTPUT_NAMES[1]]
+        for entry in entries:
+            eager_maps[entry["path"]]=combined_for(entry,eager_mapper,"eager")
+            triton_maps[entry["path"]]=combined_for(entry,triton_mapper,"triton")
+        final_parity=combined_parity(entries,eager=lambda entry:eager_maps[entry["path"]],triton=lambda entry:triton_maps[entry["path"]],threshold=threshold)
+        final_parity["timings"]=timings
+        base["final_e2_split_parity"]=final_parity
+        if final_parity["status"] != "PARITY_PASS":
+            result={**base,"status":INSPECTION_UNAVAILABLE,"promotion_eligible":False,"cause":"FINAL_E2_SPLIT_PARITY_FAILED","benchmark":"SKIPPED_FINAL_PARITY_FAILURE","original_image_e2e":"SKIPPED_FINAL_PARITY_FAILURE"}
+            return result
+        executable=Path(args.perf_analyzer); identity=perf_analyzer_identity(executable,runner=subprocess.run); perf=[]
+        for command in perf_analyzer_commands(executable, endpoint, root):
+            completed=subprocess.run(command,text=True,capture_output=True,check=False); csv=Path(command[command.index("-f")+1])
+            if completed.returncode or not csv.is_file() or not csv.read_bytes(): raise RuntimeError("PERF_ANALYZER_FAILED")
+            perf.append({"command":command,"returncode":completed.returncode,"stdout_sha256":sha256(completed.stdout.encode()).hexdigest(),"stderr_sha256":sha256(completed.stderr.encode()).hexdigest(),"csv":{"name":csv.name,"sha256":sha256(csv.read_bytes()).hexdigest()}})
         began=time.perf_counter(); full=decode_rgb01(source); h,w=full.shape[:2]; sums=np.zeros((h,w),np.float64); weights=np.zeros((h,w),np.float64); infer=0.0
         boxes=_split_boxes((h,w))
-        for y,x,y2,x2 in boxes:
-            tile=torch.from_numpy(np.ascontiguousarray(full[y:y2,x:x2].transpose(2,0,1))).unsqueeze(0).to(device); output,elapsed=request(tile); infer += elapsed; weight=periodic_hann_weights((y,x,y2,x2),(h,w)); sums[y:y2,x:x2]+=output[OUTPUT_NAMES[0]][0,0]*weight; weights[y:y2,x:x2]+=weight
+        for group in batch_groups(boxes):
+            tiles=np.stack([np.ascontiguousarray(full[y:y2,x:x2].transpose(2,0,1)) for y,x,y2,x2 in group])
+            output,elapsed=request(torch.from_numpy(tiles).to(device)); infer += elapsed
+            for index,(y,x,y2,x2) in enumerate(group):
+                weight=periodic_hann_weights((y,x,y2,x2),(h,w)); sums[y:y2,x:x2]+=output[OUTPUT_NAMES[0]][index,0]*weight; weights[y:y2,x:x2]+=weight
         global_output,elapsed=request(canonical_256(full,torch,device=device)); infer += elapsed
         combined=combine_split_maps((sums/weights).astype("<f4"),global_output[OUTPUT_NAMES[1]][0,0],freeze["quantiles"],torch)
-        result = {**base,"direct_client_benchmark":benchmark,"original_image_e2e":{"source_shape":[h,w,3],"tile_count":len(boxes),"triton_request_seconds_sum":infer,"total_seconds":time.perf_counter()-began,"raw_map_sha256":sha256(combined.tobytes()).hexdigest(),"threshold":"UNAVAILABLE","result":INSPECTION_UNAVAILABLE}}
+        result = {**base,"status":READY,"promotion_eligible":True,"perf_analyzer":{**identity,"package_version":args.perf_wheel_version,"runs":perf},"original_image_e2e":{"source_shape":[h,w,3],"tile_count":len(boxes),"tile_batch_size":TILE_BATCH_SIZE,"triton_call_count":len(batch_groups(boxes))+1,"triton_transport":"tritonclient.http.binary","triton_request_seconds_sum":infer,"total_seconds":time.perf_counter()-began,"raw_map_sha256":sha256(combined.tobytes()).hexdigest(),"decision":{key:value for key,value in strict_decision(combined,threshold).items() if key != "mask"},"result":"INSPECTION_COMPLETE_RAW_DECISION"},"gpu_peak_bytes":{"allocated":int(torch.cuda.max_memory_allocated()),"reserved":int(torch.cuda.max_memory_reserved())}}
     finally:
         if server is not None:
             subprocess.run(["docker","stop","-t","10",name],capture_output=True,text=True)
@@ -388,10 +481,17 @@ def run_promotion(args: PromotionArgs, *, steps: Callable[[PromotionArgs, Prefli
     """Run one admitted lease window; absent hardware steps fail closed and persist evidence."""
     source = _admit_source_image(args)
     checkpoint, freeze = Path(args.checkpoint).resolve(), Path(args.split_freeze).resolve()
-    if not freeze.is_file(): raise ValueError("split freeze is required")
-    binding = {"run_id": args.run_id, "checkpoint_sha256": sha256(checkpoint.read_bytes()).hexdigest(),
+    parity_manifest=Path(args.parity_manifest).resolve()
+    calibration_artifact=Path(args.calibration_artifact).resolve()
+    if not freeze.is_file() or not parity_manifest.is_file() or not calibration_artifact.is_file(): raise ValueError("split freeze, parity manifest, and calibration artifact are required")
+    checkpoint_sha256 = sha256(checkpoint.read_bytes()).hexdigest()
+    from .split_calibration import load_calibration_artifact
+    threshold, calibration_sha256 = load_calibration_artifact(calibration_artifact, split_freeze=freeze, checkpoint_sha256=checkpoint_sha256)
+    # Validate all parity identities before any admission/GPU effect.
+    parity_manifest_entries(parity_manifest, Path(args.dataset_root))
+    binding = {"run_id": args.run_id, "checkpoint_sha256": checkpoint_sha256,
                "source_image": str(source.relative_to(Path(args.dataset_root).resolve())), "source_image_sha256": sha256(source.read_bytes()).hexdigest(),
-               "split_freeze_sha256": sha256(freeze.read_bytes()).hexdigest(), "mode": {"input_shape": list(INPUT_SHAPE), "image": IMAGE, "max_batch_size": 0, "instance_count": 1, "dynamic_batching": False}}
+               "split_freeze_sha256": sha256(freeze.read_bytes()).hexdigest(), "calibration_artifact_sha256": calibration_sha256, "calibration_threshold": threshold, "calibration_comparator": ">", "parity_manifest_sha256": sha256(parity_manifest.read_bytes()).hexdigest(), "mode": {"input_shape": list(INPUT_SHAPE), "image": IMAGE, "max_batch_size": MAX_BATCH_SIZE, "instance_count": 1, "dynamic_batching": False}}
     proof = promotion_preflight(args, admit=admit)  # must precede mkdir, probes, or GPU lease
     root = Path(proof.roots["artifact"]).resolve()
     if root != Path(args.artifact_root).resolve():
@@ -400,7 +500,7 @@ def run_promotion(args: PromotionArgs, *, steps: Callable[[PromotionArgs, Prefli
     if not lease_directory.is_relative_to(root):
         raise ValueError("lease directory must be under admitted artifact root")
     result: dict[str, Any] = {"run_id": args.run_id, "status": INSPECTION_UNAVAILABLE, "promotion_eligible": False, "stage": "probe", "binding": binding,
-                               "limitations": ["direct stdlib client is not Perf Analyzer", "official comparator unavailable: no NORMAL/ANOMALOUS"]}
+                               "limitations": ["Perf Analyzer package 2.60 and Triton server 2.70 are version-distinct measured tools"]}
     try:
         probes = runtime_probes(runner=runner)
         result["runtime_probes"] = probes
@@ -412,6 +512,9 @@ def run_promotion(args: PromotionArgs, *, steps: Callable[[PromotionArgs, Prefli
             if isinstance(model, Mapping):
                 step_result["model"] = {key: model[key] for key in ("sha256", "bytes") if key in model}
             result["steps"] = step_result
+            if step_result.get("status") == READY and step_result.get("promotion_eligible") is True:
+                result["status"] = READY
+                result["promotion_eligible"] = True
     except Exception as exc:
         result["exception"] = {"type": type(exc).__name__, "fingerprint": _error_fingerprint(exc)}
         result.update(unavailable_result(f"R2:{type(exc).__name__}:{_error_fingerprint(exc)}"))
@@ -432,6 +535,44 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(result, sort_keys=True))
     return 0 if result.get("status") == READY else 2
 
+def batch_groups(items: Iterable[Any], size: int = TILE_BATCH_SIZE) -> list[list[Any]]:
+    if size != TILE_BATCH_SIZE: raise ValueError("R2 tile batching is fixed at TILE_BATCH_SIZE")
+    values=list(items); return [values[index:index+size] for index in range(0,len(values),size)]
+
+
+def perf_analyzer_commands(executable: Path, endpoint: str, output_root: Path) -> list[list[str]]:
+    """Pinned 2.60 inner-ELF syntax; each concurrency emits one exact CSV."""
+    base=[str(executable),"-m",MODEL_NAME,"-i","http","-u",endpoint.removeprefix("http://"),"--input-data","zero","--input-tensor-format","binary","--output-tensor-format","binary","--shape",f"{INPUT_NAME}:1,3,256,256","--measurement-mode","time_windows","--measurement-interval","5000","--max-trials","5","--warmup-request-count","5","--percentile","99"]
+    return [base+["--concurrency-range",f"{value}:{value}:1","-f",str(Path(output_root)/f"perf-c{value}.csv")] for value in (1,2,4)]
+
+
+def perf_analyzer_identity(executable: Path, *, runner: Callable[..., Any]) -> dict[str, Any]:
+    completed=runner([str(executable),"--version"],text=True,capture_output=True,check=False)
+    if completed.returncode: raise RuntimeError("PERF_ANALYZER_VERSION_FAILED")
+    path=Path(executable); return {"executable_sha256":sha256(path.read_bytes()).hexdigest(),"version_output":completed.stdout.strip()}
+
+
+def parity_manifest_entries(path: Path, dataset_root: Path) -> list[dict[str, Any]]:
+    """Exactly three hash-bound train/validation originals; no TEST identity can enter parity."""
+    value=json.loads(Path(path).read_text()); rows=value.get("images") if isinstance(value,dict) else value
+    if not isinstance(rows,list) or len(rows) != 3: raise ValueError("parity manifest requires exactly three images")
+    category=(Path(dataset_root).resolve()/"sheet_metal"); allowed=((category/"train").resolve(),(category/"validation").resolve()); seen=set(); result=[]
+    for row in rows:
+        if not isinstance(row,Mapping) or set(row)!={"path","sha256"} or not isinstance(row["path"],str) or not isinstance(row["sha256"],str): raise ValueError("invalid parity manifest row")
+        source=(category/row["path"]).resolve()
+        if not source.is_file() or not any(source.is_relative_to(root) for root in allowed) or sha256(source.read_bytes()).hexdigest()!=row["sha256"] or row["path"] in seen: raise ValueError("parity manifest identity/hash/privacy failure")
+        seen.add(row["path"]);result.append({"path":row["path"],"source":source,"sha256":row["sha256"]})
+    return result
+
+
+def combined_parity(entries: Iterable[Mapping[str, Any]], *, eager: Callable[[Mapping[str, Any]], Any], triton: Callable[[Mapping[str, Any]], Any], threshold: float) -> dict[str, Any]:
+    """Compare only final E2-Split maps; raw branches are intentionally excluded."""
+    rows=[]
+    for entry in entries:
+        report=parity_stage(eager(entry),triton(entry),threshold=threshold)
+        rows.append({"path":entry["path"],"sha256":entry["sha256"],**report})
+    flips=sum(int(row.get("decision_flips",0)) for row in rows)
+    return {"status":"PARITY_PASS" if rows and all(row["status"]=="PARITY_PASS" for row in rows) else INSPECTION_UNAVAILABLE,"image_count":len(rows),"decision_flips":flips,"images":rows}
 
 if __name__ == "__main__":
     raise SystemExit(main())
