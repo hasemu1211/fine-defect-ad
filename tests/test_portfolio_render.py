@@ -11,6 +11,8 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     (artifacts/f'g002-validation-raw-maps-{run}.json').write_text(json.dumps({'maps':[]}))
     public=tmp_path/'public'; result=render(artifact_root=artifacts,dataset_root=None,run_id=run,public_dir=public,preview_dir=None)
     assert result['selected_geometry']=='E1'
+    geometry=(public/'geometry-selection.svg').read_text()
+    assert 'height="300"' in geometry and '시임/원점: false' in geometry
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','system-architecture.svg','training-curve.svg']
     assert str(tmp_path) not in ''.join(p.read_text() for p in public.iterdir())
 
