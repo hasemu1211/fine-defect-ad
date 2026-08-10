@@ -32,3 +32,7 @@ def test_outputs_are_hash_bound_and_path_free(tmp_path):
 def test_compactness_is_4_connected_perimeter_metric():
     m=np.ones((2,2),bool)
     assert mask_features(m)['compactness']==pytest.approx(np.pi/4) # area 4, exposed perimeter 8
+
+def test_cleanup_rejects_nonduplicate(tmp_path):
+    from fine_defect_ad.paired_rawmap_analysis import cleanup_superseded_duplicates
+    with pytest.raises(ValueError): cleanup_superseded_duplicates(artifact_root=tmp_path,run_id='r',admit=lambda **_:None,writer=lambda *_,**__:None)

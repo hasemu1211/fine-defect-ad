@@ -160,3 +160,26 @@ def main(argv:list[str]|None=None)->int:
  p=argparse.ArgumentParser();p.add_argument('--artifact-root',type=Path,required=True);p.add_argument('--e2-manifest',type=Path,required=True);p.add_argument('--superadd-manifest',type=Path,required=True);p.add_argument('--dataset-root',type=Path,required=True);p.add_argument('--run-id',required=True);a=p.parse_args(argv)
  r=analyze(artifact_root=a.artifact_root,e2_manifest=a.e2_manifest,superadd_manifest=a.superadd_manifest,dataset_root=a.dataset_root,run_id=a.run_id); paths=_outputs(a.artifact_root.resolve(),a.run_id,r); print(json.dumps({'status':'READY','analysis_sha256':_hash(paths['json'].read_bytes()),'representatives':r['record']['representatives']},sort_keys=True));return 0
 if __name__=='__main__':raise SystemExit(main())
+
+def cleanup_superseded_duplicates(*, artifact_root:Path, run_id:str, admit:Callable[...,Any]=preflight, writer:Callable[...,Any]=atomic_write)->dict[str,Any]:
+    """Audit then remove only legacy derivative aliases proven byte-identical."""
+    root=Path(artifact_root).resolve(); legacy='24d9f48b7fe3d9e82c23ff83d19debdb45e5575aaa8001238664cbe98bd225f7'
+    pairs=[
+      (root/f'paired-rawmap-analysis-{run_id}-{legacy}.csv',root/f'paired-rawmap-analysis-rows-{run_id}-e947df62a3e53e160916f836a07f178e175811c0bbadb10e7da8839be5fbb701.csv'),
+      (root/f'paired-rawmap-analysis-{run_id}-{legacy}.png',root/f'paired-rawmap-analysis-panel-{run_id}-012d0446be4c23d3fdb3ef94e669c6041be7a695d34fa57b0cbb82f313eb4f0b.png'),
+      (root/f'paired-rawmap-analysis-{run_id}-{legacy}.svg',root/f'paired-rawmap-analysis-figure-{run_id}-f9bc03d065d1e619268f990897e666df79fc4af6d0114f9591dc935af5168922.svg'),
+    ]
+    audit=[]
+    for old,keep in pairs:
+        if not old.is_file() or not keep.is_file() or old.read_bytes()!=keep.read_bytes(): raise ValueError('superseded evidence is not an exact duplicate')
+        audit.append({'old_basename':old.name,'old_sha256':_hash(old.read_bytes()),'kept_basename':keep.name,'kept_sha256':_hash(keep.read_bytes()),'reason':'SUPERSEDED_BYTE_IDENTICAL_DUPLICATE'})
+    record={'status':'PAIRED_RAWMAP_SUPERSEDED_DUPLICATE_CLEANUP','run_id':run_id,'records':audit,'code_git_commit':__import__('subprocess').run(['git','-C',str(Path(__file__).resolve().parents[2]),'rev-parse','HEAD'],check=True,capture_output=True,text=True).stdout.strip()}
+    payload=_canon(record); path=root/f'paired-rawmap-analysis-cleanup-{run_id}-{_hash(payload)}.json'; source=f'exact cleanup audit bytes={len(payload)}'
+    proof=admit(run_id=run_id,allocations=[Allocation('artifact',len(payload),'persistent',source,'paired-rawmap-analysis-cleanup'),Allocation('artifact',len(payload),'transient',source,'paired-rawmap-analysis-cleanup-incoming')],reserve_bytes=len(payload),reserve_evidence={'max_pending_atomic_write_bytes':len(payload),'measured_high_water_bytes':0,'runtime_or_source_citation':source})
+    if Path(proof.roots['artifact']).resolve()!=root: raise ValueError('cleanup proof root changed')
+    if not path.exists() and writer(path,payload,proof=proof,run_id=run_id,overwrite=False).get('status')!=READY: raise ValueError('cleanup audit write failed')
+    if path.read_bytes()!=payload: raise ValueError('cleanup audit readback failed')
+    for old,keep in pairs:
+        old.unlink()
+        if old.exists() or _hash(keep.read_bytes())!=next(x['kept_sha256'] for x in audit if x['kept_basename']==keep.name): raise ValueError('cleanup integrity failure')
+    return {**record,'audit_sha256':_hash(payload)}
