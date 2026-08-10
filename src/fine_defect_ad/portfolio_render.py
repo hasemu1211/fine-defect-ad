@@ -41,14 +41,19 @@ def geometry_svg(freeze: dict) -> str:
 
 
 def architecture_svg() -> str:
-    boxes=[(30,'검증 정상 이미지'),(220,'EfficientAD-S\n70k 학습 체크포인트'),(440,'원시 이상 맵\nSHA-256 계보'),(640,'검증 전용\n임계값 산출물')]
-    body='<text x="28" y="30" class="t">이상 탐지 평가 파이프라인</text><text x="28" y="51" class="s">재현 가능한 산출물; 비교 기준 출처 부재로 판정/F1은 차단 상태</text>'
-    for x,label in boxes:
-        lines=label.split('\n'); body+=f'<rect x="{x}" y="98" width="150" height="90" rx="10" fill="#fff" stroke="#94a3b8"/>'
-        body+=''.join(f'<text x="{x+12}" y="{128+i*20}" class="s">{escape(line)}</text>' for i,line in enumerate(lines))
-    for x in [180,370,590]: body+=f'<path d="M{x} 143h28" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-    body+='<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3z" fill="#64748b"/></marker></defs>'
-    return _svg(820,230,body)
+    arrow = '<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3z" fill="#64748b"/></marker></defs>'
+    box = lambda x, y, w, h, fill, title, detail: (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="#64748b"/>'
+                                                       f'<text x="{x+20}" y="{y+38}" class="t">{title}</text><text x="{x+20}" y="{y+67}" class="s">{detail}</text>')
+    body = ('<text x="48" y="48" class="t">E2-Split 고해상도 평가 경로</text>'
+            '<text x="48" y="74" class="s">동일 EfficientAD-S 체크포인트 · 검증 데이터로만 분위수 동결</text>'
+            + box(400, 105, 320, 84, '#ffffff', '고해상도 입력 이미지', '원본 해상도 유지')
+            + box(70, 265, 440, 130, '#e0f2fe', '국소 이상 맵', '256×256 타일 · 교사–학생 잔차 · Hann stitch')
+            + box(610, 265, 440, 130, '#ede9fe', '전역 이상 맵', 'canonical 256×256 · 오토인코더–학생 잔차')
+            + box(335, 470, 450, 86, '#dcfce7', '맵 결합', '동결 분위수로 정규화 후 결합')
+            + box(335, 585, 450, 38, '#fff7ed', '원시 이상 맵 → 검증 / TESTpub 평가', '')
+            + '<path d="M560 189v35H290v31M560 224h270v31M290 395v34h270M830 395v34H560M560 556v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + arrow)
+    return _svg(1120, 640, body)
 
 
 def _find_source(root: Path, identity: str, digest: str) -> Path:

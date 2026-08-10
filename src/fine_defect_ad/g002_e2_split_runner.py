@@ -23,6 +23,25 @@ VALIDATION_COMMAND = "g002-e2-split-validation-freeze"
 TEST_COMMAND = "g002-e2-split-test-public-once"
 
 
+def verify_split_lineage(freeze: dict[str, Any], admitted: Any) -> None:
+    for field in ("checkpoint_sha256", "sidecar_sha256", "metrics_sha256", "final_attempt_sha256", "identity_sha256", "pilot_sha256"):
+        if field in freeze and freeze[field] != getattr(admitted, field):
+            raise ValueError(f"split freeze/model lineage mismatch: {field}")
+
+
+def safe_failure_fields(exc: Exception) -> dict[str, str]:
+    """Correlate failures without serializing possibly path-bearing exception text."""
+    kind = type(exc).__name__
+    return {"exception_type": kind, "exception_fingerprint_sha256": sha256(f"{kind}:{exc}".encode()).hexdigest(),
+            "exception_message": "Execution failed; the original exception was re-raised unchanged."}
+
+
+def add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    for key in ("artifact-root", "checkpoint", "metrics", "final-attempt", "training-identity", "dataset-root", "teacher-small", "imagenette-root", "lease-directory"):
+        parser.add_argument("--" + key, type=Path, required=True)
+    parser.add_argument("--run-id", required=True)
+
+
 def _write(root: Path, run_id: str, name: str, data: bytes) -> Path:
     source = f"exact DEC-SPLIT-003 artifact bytes={len(data)}"
     proof = preflight(run_id=run_id, allocations=[Allocation("artifact", len(data), "persistent", source, name), Allocation("artifact", len(data), "transient", source, name + "-incoming")], reserve_bytes=len(data), reserve_evidence={"max_pending_atomic_write_bytes":len(data),"measured_high_water_bytes":0,"runtime_or_source_citation":source})
@@ -106,7 +125,7 @@ def run_test_public_once(args: Any) -> dict[str, Any]:
     # The latch is persisted before the first test image is decoded.
     if not torch.cuda.is_available(): raise RuntimeError("CUDA_UNAVAILABLE")
     with GpuLease(args.lease_directory,args.run_id,TEST_COMMAND):
-        _admitted, model=_model(args,torch); rows=[]
+        _admitted, model=_model(args,torch); verify_split_lineage(freeze, _admitted); rows=[]
         recovery = _attempt_recovery(root, args.run_id, latch_path)
         try:
             for index, entry in enumerate(test_public_entries(args.dataset_root)):
@@ -118,19 +137,17 @@ def run_test_public_once(args: Any) -> dict[str, Any]:
             manifest_path=_write(root,args.run_id,f"g002-e2-split-test-public-raw-maps-{args.run_id}.json",_canon(manifest))
             result=evaluate_persisted_split_test_public(artifact_root=root,dataset_root=args.dataset_root,raw_manifest=manifest_path,split_freeze=freeze_path,evaluator=args.evaluator,run_id=args.run_id,recovery=recovery)
         except Exception as exc:
-            failure = _canon({"operation": TEST_COMMAND, "run_id": args.run_id, "failure": f"{type(exc).__name__}:{exc}", "decision_id": SPLIT_DECISION_ID})
+            failure = _canon({"schema_version": "1.0", "operation": TEST_COMMAND, "run_id": args.run_id, "decision_id": SPLIT_DECISION_ID, **safe_failure_fields(exc)})
             _write(root, args.run_id, _failure_log_path(root, args.run_id, failure).name, failure)
             raise
     return {**result,"attempt_latch":str(latch)}
 
 
-def parse_args(argv: Sequence[str] | None=None):
-    p=argparse.ArgumentParser(description=__doc__); sub=p.add_subparsers(dest="operation",required=True)
+def parse_args(argv: Sequence[str] | None = None, *, description: str | None = None):
+    p = argparse.ArgumentParser(description=description or __doc__); sub=p.add_subparsers(dest="operation",required=True)
     for name in ("validation","testpub"):
         q=sub.add_parser(name)
-        for key in ("artifact-root","checkpoint","metrics","final-attempt","training-identity","dataset-root","teacher-small","imagenette-root","lease-directory"):
-            q.add_argument("--"+key,type=Path,required=True)
-        q.add_argument("--run-id",required=True)
+        add_common_arguments(q)
         if name=="testpub": q.add_argument("--split-freeze",type=Path,required=True);q.add_argument("--evaluator",type=Path,required=True)
     return p.parse_args(argv)
 

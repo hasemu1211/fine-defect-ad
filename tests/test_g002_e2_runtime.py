@@ -270,3 +270,26 @@ def test_split_freeze_binds_fresh_maps_geometry_and_new_decision():
   frozen=freeze_split_validation(admitted=gate,quantiles=split_quantiles(local,global_),map_rows=rows,geometry={'tile':256,'stride':128,'weight_min':.1})
   verify_split_freeze(frozen)
   assert frozen['decision_id'] != 'DEC-GEO-002' and frozen['status'] == 'READY'
+
+def test_split_testpub_failure_log_never_serializes_path_exception(monkeypatch):
+ import sys
+ from types import SimpleNamespace
+ import fine_defect_ad.g002_e2_split_runner as module
+ with TemporaryDirectory() as directory:
+  root=Path(directory); freeze=root/'freeze.json'; freeze.write_text(json.dumps({'freeze_sha256':'f'*64}))
+  evaluator=root/'evaluator'; evaluator.write_bytes(b'evaluator')
+  args=SimpleNamespace(artifact_root=root,split_freeze=freeze,run_id='run',lease_directory=root/'lease',dataset_root=root,evaluator=evaluator)
+  monkeypatch.setitem(sys.modules,'torch',SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:True),device=lambda value:value))
+  monkeypatch.setattr(module,'verify_split_freeze',lambda _:None); monkeypatch.setattr(module,'GpuLease',lambda *_:nullcontext())
+  monkeypatch.setattr(module,'_model',lambda *_:(None,object())); monkeypatch.setattr(module,'test_public_entries',lambda _:[])
+  monkeypatch.setattr(module,'evaluate_persisted_split_test_public',lambda **_:(_ for _ in ()).throw(RuntimeError('/private/test.png')))
+  monkeypatch.setattr(module,'_write',lambda target_root,_run,name,data:(target_root/name).write_bytes(data) or target_root/name)
+  with pytest.raises(RuntimeError,match='private/test') : module.run_test_public_once(args)
+  failure=next(root.glob('g002-e2-split-testpub-FAILED-run-*.json')).read_text()
+  assert '/private/test.png' not in failure and json.loads(failure)['exception_fingerprint_sha256']==sha256(b'RuntimeError:/private/test.png').hexdigest()
+
+def test_split_lineage_rejects_mismatch():
+ from types import SimpleNamespace
+ from fine_defect_ad.g002_e2_split_runner import verify_split_lineage
+ with pytest.raises(ValueError, match='lineage mismatch'):
+  verify_split_lineage({'checkpoint_sha256':'x'*64}, SimpleNamespace(checkpoint_sha256='y'*64))

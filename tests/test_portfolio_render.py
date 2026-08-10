@@ -14,6 +14,8 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     geometry=(public/'geometry-selection.svg').read_text()
     assert 'height="330"' in geometry and '256×256 기준 경로' in geometry and '시임/원점 안정성: 미통과' in geometry and '분기 분리형 고해상도 타일링 후보' in geometry and 'DEC-SPLIT-003' in geometry
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','system-architecture.svg','training-curve.svg']
+    architecture=(public/'system-architecture.svg').read_text()
+    assert 'width="1120" height="640"' in architecture and '국소 이상 맵' in architecture and '전역 이상 맵' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
     assert str(tmp_path) not in ''.join(p.read_text() for p in public.iterdir())
 
 def test_preview_metadata_binds_each_png(tmp_path):
