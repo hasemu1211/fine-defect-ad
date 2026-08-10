@@ -99,7 +99,7 @@ evidence/            공개 가능한 평가 기준선·비교·입력 해시
 ## 상세 문서
 
 - [배포 후보와 backend A/B 평가](docs/DEPLOYMENT_EVALUATION.md)
-- [고해상도 추론 평가와 한계](docs/G002_EVALUATION.md)
+- [고해상도 추론 평가와 한계](docs/SHEET_METAL_EVALUATION.md)
 - [기준선 평가](evidence/g002/baseline_evaluation.json)
 - [고해상도 경로 비교](evidence/g002/evaluation_comparison.json)
 - [라이선스와 출처](LICENSES.md)

@@ -85,5 +85,5 @@ A/B 실행은 TESTpub을 tuning 데이터로 사용하지 않았다. 결과는 �
 ## 관련 문서
 
 - [README](../README.md): 프로젝트 요약과 공개 결과
-- [고해상도 추론 평가와 한계](G002_EVALUATION.md): 분할 추론 경로와 256×256 기준선 비교
+- [고해상도 추론 평가와 한계](SHEET_METAL_EVALUATION.md): 분할 추론 경로와 256×256 기준선 비교
 - [고해상도 경로 비교 JSON](../evidence/g002/evaluation_comparison.json): 동일 체크포인트의 기존 경로 비교
