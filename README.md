@@ -57,3 +57,9 @@ evidence/            공개 가능한 평가 기준선·비교·입력 해시
 - [기준선 평가](evidence/g002/baseline_evaluation.json)
 - [고해상도 경로 비교](evidence/g002/evaluation_comparison.json)
 - [라이선스와 출처](LICENSES.md)
+
+### Frozen paired raw-map analysis
+
+A descriptive, hash-replayed paired analysis evaluates the two independent pipelines on the same TESTpub114 identities and 528×2112 maps using threshold-independent tie-aware pixel ranking and anonymized raw-map evidence. It does not select a model or assert causal/general performance differences. [Method and limitations](docs/PAIRED_RAWMAP_ANALYSIS.md)
+
+![Frozen paired raw-map analysis](docs/assets/paired-rawmap-analysis.svg)
