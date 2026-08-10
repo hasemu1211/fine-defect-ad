@@ -111,7 +111,7 @@ def analyze(*,artifact_root:Path,e2_manifest:Path,superadd_manifest:Path,dataset
       am=_raw(root,'g002-e2-split-test-public-raw-',i,a['map_sha256']); bm=_raw(root,f'superadd-vits-posthoc-raw-{run_id}-',i,b['map_sha256'])
       m=np.zeros(SHAPE,bool) if e['mask'] is None else _mask(e['mask']); feat=mask_features(m)
       au,bu=tie_auroc(am,m),tie_auroc(bm,m)
-      rows.append({'index':i,'id_sha256':b['id_sha256'],'label':e['label'],'source_sha256':e['source_sha256'],'mask_sha256':e['mask_sha256'],'e2_map_sha256':a['map_sha256'],'superadd_map_sha256':b['map_sha256'],'e2_pixel_auroc':au,'superadd_pixel_auroc':bu,'pixel_auroc_delta':None if au is None else bu-au,**feat,'e2_map_max':float(am.max()),'superadd_map_max':float(bm.max())})
+      rows.append({'index':i,'id_sha256':b['id_sha256'],'label':e['label'],'source_sha256':e['source_sha256'],'mask_sha256':e['mask_sha256'],'e2_map_sha256':a['map_sha256'],'superadd_map_sha256':b['map_sha256'],'e2_pixel_auroc':au,'superadd_pixel_auroc':bu,'pixel_auroc_delta':None if au is None else bu-au,**feat,'e2_map_max':float(am.max()),'superadd_map_max':float(bm.max()),'_mask':m})
     # map maxima are converted to within-model ranks before pairing; raw score scales are not compared.
     er=_rank(np.array([r['e2_map_max'] for r in rows]))/N; sr=_rank(np.array([r['superadd_map_max'] for r in rows]))/N
     for r,x,y in zip(rows,er,sr): r['score_rank_delta']=float(y-x); r.pop('e2_map_max');r.pop('superadd_map_max')
@@ -133,15 +133,16 @@ def analyze(*,artifact_root:Path,e2_manifest:Path,superadd_manifest:Path,dataset
 
 def _outputs(root:Path,run_id:str,result:dict[str,Any],*,admit:Callable[...,Any]=preflight,writer:Callable[...,Any]=atomic_write)->dict[str,Path]:
     rec=result['record']; rows=result['rows']; js=_canon(rec); digest=_hash(js); base=f'paired-rawmap-analysis-{run_id}-{digest}'
-    csv_rows=[{k:('' if v is None else v) for k,v in r.items()} for r in rows]; import io
+    csv_rows=[{k:('' if v is None else v) for k,v in r.items() if not k.startswith('_')} for r in rows]; import io
     out=io.StringIO(); w=csv.DictWriter(out,fieldnames=list(csv_rows[0]));w.writeheader();w.writerows(csv_rows); cb=out.getvalue().encode()
     # raw-map-only compact heatmap panel
-    panel=Image.new('RGB',(720,max(1,len(result['representatives']))*150),(255,255,255)); d=ImageDraw.Draw(panel)
+    panel=Image.new('RGB',(1080,max(1,len(result['representatives']))*170),(255,255,255)); d=ImageDraw.Draw(panel)
     for j,(cat,row) in enumerate(result['representatives']):
         y=j*150; d.text((8,y+5),f'{cat}: {row["id_sha256"][:12]}',fill=(0,0,0))
-        for x, prefix, digest, label in ((8,'g002-e2-split-test-public-raw-',row['e2_map_sha256'],'E2'),(365,f'superadd-vits-posthoc-raw-{run_id}-',row['superadd_map_sha256'],'SuperADD')):
+        for x, prefix, digest, label in ((8,'g002-e2-split-test-public-raw-',row['e2_map_sha256'],'E2 heatmap'),(365,f'superadd-vits-posthoc-raw-{run_id}-',row['superadd_map_sha256'],'SuperADD heatmap')):
             a=_raw(root,prefix,row['index'],digest); lo,hi=float(a.min()),float(a.max()); z=((a-lo)/(hi-lo+1e-12)*255).astype('uint8')
             im=Image.fromarray(z).resize((340,85),Image.Resampling.BILINEAR).convert('RGB'); panel.paste(im,(x,y+35)); d.text((x,y+122),label,fill=(0,0,0))
+        gt=Image.fromarray((row['_mask']*255).astype('uint8')).resize((340,85),Image.Resampling.NEAREST).convert('RGB'); panel.paste(gt,(720,y+35)); d.text((720,y+122),'GT mask (nearest)',fill=(0,0,0)); d.text((8,y+145),f'paired pixel-AUROC delta: {row["pixel_auroc_delta"]:+.4f}; each heatmap min-max normalized independently; white=low, black=high',fill=(0,0,0))
     png=__import__('io').BytesIO();panel.save(png,format='PNG'); pb=png.getvalue()
     st=rec['dataset_relative_quantile_strata']['area_fraction']['strata']; vals=[x['mean_paired_pixel_auroc_delta'] or 0 for x in st]; bars=''.join(f'<rect x="{170+i*190}" y="{150-max(0,v)*300:.1f}" width="70" height="{abs(v)*300:.1f}" fill="{'#2878b5' if v>=0 else '#c94c4c'}"/><text x="{160+i*190}" y="185" font-size="13">{st[i]['name']} n={st[i]['count']}</text><text x="{170+i*190}" y="205" font-size="12">{v:+.3f}</text>' for i,v in enumerate(vals)); svg=(f'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240"><rect width="100%" height="100%" fill="white"/><text x="25" y="34" font-size="21">Paired pixel-AUROC delta by GT area fraction (descriptive)</text><text x="25" y="58" font-size="13">SuperADD − E2-Split; same TESTpub114, frozen 528×2112 raw maps. 4-connected mask strata.</text><line x1="120" y1="150" x2="820" y2="150" stroke="#222"/>{bars}<text x="25" y="225" font-size="12">No inference, threshold tuning, source images, or causal/model-selection claim.</text></svg>').encode()
     paths={'json':root/f'{base}.json','csv':root/f'paired-rawmap-analysis-rows-{run_id}-{_hash(cb)}.csv','svg':root/f'paired-rawmap-analysis-figure-{run_id}-{_hash(svg)}.svg','png':root/f'paired-rawmap-analysis-panel-{run_id}-{_hash(pb)}.png'}
