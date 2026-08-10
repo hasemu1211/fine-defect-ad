@@ -16,7 +16,9 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg']
     architecture=(public/'system-architecture.svg').read_text()
     assert 'width="100%" height="640"' in architecture and '고해상도 타일 분할' in architecture and 'TensorRT FP32 plan' in architecture and 'Triton server' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
-    assert 'M560 177v38M560 301v25H302v29M480 400h160M818 445v25H560' in architecture
+    for connector in ('M560 177v31', 'M560 301v25H302v22', 'M480 400h153', 'M818 445v12H760v6', 'M560 556v22'):
+        assert f'd="{connector}"' in architecture
+    assert architecture.count('marker-end="url(#a)"') == 5
     assert 'x="560.0" y="610.0" class="t" text-anchor="middle">원시 이상 맵 → 검증 / TESTpub 평가</text>' in architecture
     serving=(public/'serving-evidence.svg').read_text()
     assert '2.4610 s/image → TensorRT FP32 2.1040 s/image' in serving

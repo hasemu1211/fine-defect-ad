@@ -55,7 +55,10 @@ def architecture_svg() -> str:
             + box(640, 355, 355, 90, '#fff7ed', 'Triton server', 'plan load · HTTP binary transport')
             + box(335, 470, 450, 86, '#dcfce7', 'stitch · 맵 결합', 'Hann stitch · 동결 분위수 정규화')
             + box(335, 585, 450, 38, '#ffffff', '원시 이상 맵 → 검증 / TESTpub 평가', '')
-            + '<path d="M560 177v38M560 301v25H302v29M480 400h160M818 445v25H560" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + '<path d="M560 177v31" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + '<path d="M560 301v25H302v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + '<path d="M480 400h153" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + '<path d="M818 445v12H760v6" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
             + '<path d="M560 556v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
             + arrow)
     return _svg(1120, 640, body)
