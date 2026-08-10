@@ -98,3 +98,9 @@ def test_checkpoint_envelope_filename_digest_and_raw_conflict_fail_closed(tmp_pa
     subject._write_envelope(tmp_path,args,0,row,latch,binding,admit=lambda **_:_Proof(tmp_path),writer=_writer)
     path=next(tmp_path.glob(f"{subject.ENVELOPE_PREFIX}-*")); path.write_bytes(path.read_bytes()[:-1]+b"x")
     with pytest.raises(subject.ChallengerBlocked): subject._adopt_orphan(tmp_path,args,0,entry,latch,binding,admit=lambda **_:_Proof(tmp_path),writer=_writer)
+
+def test_cublas_workspace_config_sets_unset_and_blocks_conflict(monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    assert subject._cublas_workspace_config() == ":4096:8"
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+    with pytest.raises(subject.ChallengerBlocked): subject._cublas_workspace_config()

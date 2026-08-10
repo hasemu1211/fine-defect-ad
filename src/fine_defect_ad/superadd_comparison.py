@@ -212,6 +212,14 @@ def _pre_admit_window(root: Path, args: ComparisonArgs, *, admit: Callable[..., 
     if Path(proof.roots["artifact"]).resolve() != root: raise ChallengerBlocked("artifact root changed before latch")
 
 
+def _cublas_workspace_config() -> str:
+    value = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    if value is None:
+        value = ":4096:8"; os.environ["CUBLAS_WORKSPACE_CONFIG"] = value
+    if value != ":4096:8": raise ChallengerBlocked("CUBLAS_WORKSPACE_CONFIG conflicts with deterministic CUDA")
+    return value
+
+
 def deterministic_settings(torch: Any, seed: int) -> dict[str, Any]:
     """Fail closed when the installed torch cannot request deterministic kernels."""
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -221,7 +229,7 @@ def deterministic_settings(torch: Any, seed: int) -> dict[str, Any]:
         torch.backends.cudnn.deterministic = True
     except Exception as exc:
         raise ChallengerBlocked("deterministic torch/CUDA settings unavailable") from exc
-    return {"seed": seed, "torch_deterministic_algorithms": True, "cudnn_benchmark": False, "cudnn_deterministic": True}
+    return {"seed": seed, "torch_deterministic_algorithms": True, "cudnn_benchmark": False, "cudnn_deterministic": True, "cublas_workspace_config": _cublas_workspace_config()}
 
 
 def _validate_recovery_manifest(root: Path, args: ComparisonArgs, binding: Mapping[str, str], latch: Mapping[str, Any], *, entries_fn: Callable[[Path], list[dict[str, Any]]]) -> tuple[str, Mapping[str, Any], list[Mapping[str, Any]], list[Any], list[Any], list[dict[str, Any]]]:
@@ -434,6 +442,7 @@ def run_comparison(args: ComparisonArgs, *, admit: Callable[..., Any] = prefligh
     if recovered is not None: return recovered
     frozen = freeze_training_identity(identity, args.dataset_root)
     _verify_anomalib_source(args.anomalib_source)
+    _cublas_workspace_config()  # before any CUDA/CuBLAS handle creation
     if not torch.cuda.is_available(): raise RuntimeError("CUDA_UNAVAILABLE")
     started, latencies, fp16_error = time.perf_counter(), [], None
     with lease_factory(args.lease_directory, args.run_id, COMMAND):
