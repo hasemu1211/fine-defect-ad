@@ -116,8 +116,9 @@ def _live_step(
     original_create = timm.create_model
 
     def local_weight_create(*args, **kwargs):
-        kwargs["pretrained"] = False
-        kwargs["checkpoint_path"] = str(weight_path)
+        kwargs["pretrained"] = True
+        kwargs.pop("checkpoint_path", None)
+        kwargs["pretrained_cfg_overlay"] = {"file": str(weight_path)}
         return original_create(*args, **kwargs)
 
     torch_model.timm.create_model = local_weight_create

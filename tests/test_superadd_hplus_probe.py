@@ -266,3 +266,55 @@ def test_cli_unexpected_failure_is_private(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert str(private_source) not in output
     assert "STOPPED_INCOMPLETE" in output
+
+
+def test_live_step_uses_local_timm_overlay_without_network_fallback(monkeypatch):
+    calls = []
+
+    class StopAfterModelConstruction(Exception):
+        pass
+
+    class FakeModel:
+        def __init__(self, **_):
+            torch_model.timm.create_model(
+                "vit_huge_plus_patch16_dinov3",
+                pretrained=False,
+                checkpoint_path="ambient-checkpoint",
+            )
+
+        def cuda(self):
+            raise StopAfterModelConstruction
+
+    def create_model(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    torch_model = types.SimpleNamespace(
+        SuperADDModel=FakeModel,
+        timm=types.SimpleNamespace(create_model=create_model),
+    )
+    timm = torch_model.timm
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(
+            cuda=types.SimpleNamespace(
+                OutOfMemoryError=RuntimeError,
+                is_available=lambda: True,
+            )
+        ),
+    )
+    monkeypatch.setattr(subject, "_verify_anomalib_source", lambda _: None)
+    monkeypatch.setattr(subject, "_load_pinned_superadd", lambda _: (torch_model, timm))
+
+    with pytest.raises(StopAfterModelConstruction):
+        subject._live_step(
+            dataset_root=Path("/unused"),
+            fixture={"entries": []},
+            weight_path=Path("/private/weights.pth"),
+            anomalib_source=Path("/unused-source"),
+        )
+
+    _args, kwargs = calls[0]
+    assert kwargs["pretrained"] is True
+    assert kwargs["pretrained_cfg_overlay"] == {"file": "/private/weights.pth"}
+    assert "checkpoint_path" not in kwargs
