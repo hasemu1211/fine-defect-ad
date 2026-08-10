@@ -135,14 +135,17 @@ def _outputs(root:Path,run_id:str,result:dict[str,Any],*,admit:Callable[...,Any]
     rec=result['record']; rows=result['rows']; js=_canon(rec); digest=_hash(js); base=f'paired-rawmap-analysis-{run_id}-{digest}'
     csv_rows=[{k:('' if v is None else v) for k,v in r.items() if not k.startswith('_')} for r in rows]; import io
     out=io.StringIO(); w=csv.DictWriter(out,fieldnames=list(csv_rows[0]));w.writeheader();w.writerows(csv_rows); cb=out.getvalue().encode()
-    # raw-map-only compact heatmap panel
-    panel=Image.new('RGB',(1080,max(1,len(result['representatives']))*170),(255,255,255)); d=ImageDraw.Draw(panel)
+    # Raw-map + GT-mask panel: no source images. 640px native layout stays legible on mobile.
+    from PIL import ImageFont
+    font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',16)
+    small=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',17)
+    panel=Image.new('RGB',(640,max(1,len(result['representatives']))*205),(255,255,255)); d=ImageDraw.Draw(panel)
     for j,(cat,row) in enumerate(result['representatives']):
-        y=j*150; d.text((8,y+5),f'{cat}: {row["id_sha256"][:12]}',fill=(0,0,0))
-        for x, prefix, digest, label in ((8,'g002-e2-split-test-public-raw-',row['e2_map_sha256'],'E2 heatmap'),(365,f'superadd-vits-posthoc-raw-{run_id}-',row['superadd_map_sha256'],'SuperADD heatmap')):
+        y=j*205; d.text((8,y+5),f'{cat} · {row["id_sha256"][:12]} · ΔAUROC {row["pixel_auroc_delta"]:+.4f}',font=font,fill=(0,0,0))
+        for x, prefix, digest, label in ((8,'g002-e2-split-test-public-raw-',row['e2_map_sha256'],'E2'),(220,f'superadd-vits-posthoc-raw-{run_id}-',row['superadd_map_sha256'],'SuperADD')):
             a=_raw(root,prefix,row['index'],digest); lo,hi=float(a.min()),float(a.max()); z=((a-lo)/(hi-lo+1e-12)*255).astype('uint8')
-            im=Image.fromarray(z).resize((340,85),Image.Resampling.BILINEAR).convert('RGB'); panel.paste(im,(x,y+35)); d.text((x,y+122),label,fill=(0,0,0))
-        gt=Image.fromarray((row['_mask']*255).astype('uint8')).resize((340,85),Image.Resampling.NEAREST).convert('RGB'); panel.paste(gt,(720,y+35)); d.text((720,y+122),'GT mask (nearest)',fill=(0,0,0)); d.text((8,y+145),f'paired pixel-AUROC delta: {row["pixel_auroc_delta"]:+.4f}; each heatmap min-max normalized independently; white=low, black=high',fill=(0,0,0))
+            im=Image.fromarray(z).resize((195,120),Image.Resampling.BILINEAR).convert('RGB'); panel.paste(im,(x,y+34)); d.text((x,y+158),label+' heatmap',font=small,fill=(0,0,0))
+        gt=Image.fromarray((row['_mask']*255).astype('uint8')).resize((195,120),Image.Resampling.NEAREST).convert('RGB'); panel.paste(gt,(432,y+34)); d.text((432,y+158),'GT mask',font=small,fill=(0,0,0)); d.text((8,y+180),'Independent min-max per image/pipeline: white=low, black=high.',font=font,fill=(0,0,0))
     png=__import__('io').BytesIO();panel.save(png,format='PNG'); pb=png.getvalue()
     st=rec['dataset_relative_quantile_strata']['area_fraction']['strata']; vals=[x['mean_paired_pixel_auroc_delta'] or 0 for x in st]; bars=''.join(f'<rect x="{120+i*160}" y="{205-max(0,v)*400:.1f}" width="80" height="{abs(v)*400:.1f}" fill="{'#2878b5' if v>=0 else '#c94c4c'}"/><text x="{105+i*160}" y="235" font-size="18">{st[i]['name']} n={st[i]['count']}</text><text x="{120+i*160}" y="260" font-size="18">{v:+.3f}</text>' for i,v in enumerate(vals)); svg=(f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320"><rect width="100%" height="100%" fill="white"/><text x="20" y="36" font-size="24">Paired pixel-AUROC delta</text><text x="20" y="62" font-size="18">GT area-fraction strata · descriptive only</text><text x="20" y="88" font-size="18">SuperADD − E2 · same frozen TESTpub114</text><line x1="55" y1="205" x2="610" y2="205" stroke="#222"/>{bars}<text x="20" y="282" font-size="18">No inference, tuning, source images, or selection claim.</text><text x="20" y="307" font-size="18">4-connected mask strata; blue positive, red negative.</text></svg>').encode()
     paths={'json':root/f'{base}.json','csv':root/f'paired-rawmap-analysis-rows-{run_id}-{_hash(cb)}.csv','svg':root/f'paired-rawmap-analysis-figure-{run_id}-{_hash(svg)}.svg','png':root/f'paired-rawmap-analysis-panel-{run_id}-{_hash(pb)}.png'}
