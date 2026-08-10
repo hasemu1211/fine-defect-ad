@@ -11,6 +11,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from .g002_e2_runtime import verify_split_freeze
+
 
 def _hash(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
@@ -67,22 +69,96 @@ def _identity_sha256(stats: dict[str, dict[str, Any]]) -> str:
     return sha256(json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
+def _image_auroc(stats: dict[str, dict[str, Any]], *, normal_label: str, anomaly_label: str) -> float:
+    """Compute tie-aware binary AUROC from each image's maximum raw-map score."""
+    rows: list[tuple[float, int]] = []
+    for identity, value in stats.items():
+        label = value.get("label")
+        if label == normal_label:
+            target = 0
+        elif label == anomaly_label:
+            target = 1
+        else:
+            raise ValueError(f"non-binary image label: {identity}")
+        score = value.get("max")
+        if not isinstance(score, (int, float)) or not bool(np.isfinite(score)):
+            raise ValueError(f"non-finite image score: {identity}")
+        rows.append((float(score), target))
+    positives = sum(target for _, target in rows)
+    negatives = len(rows) - positives
+    if not positives or not negatives:
+        raise ValueError("both normal and anomaly images required for AUROC")
+    rows.sort(key=lambda row: row[0])
+    positive_rank_sum = 0.0
+    index = 0
+    while index < len(rows):
+        end = index + 1
+        while end < len(rows) and rows[end][0] == rows[index][0]:
+            end += 1
+        average_rank = (index + 1 + end) / 2.0
+        positive_rank_sum += average_rank * sum(target for _, target in rows[index:end])
+        index = end
+    return (positive_rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives)
+
+
+def _verify_input_bindings(*, baseline: dict[str, Any], candidate: dict[str, Any], base_maps: dict[str, Any],
+                           candidate_maps: dict[str, Any], binding: dict[str, Any], baseline_manifest: Path,
+                           candidate_manifest: Path, candidate_binding: Path) -> str:
+    """Reject evidence/manifests unless their persisted production bindings agree."""
+    base_hash, candidate_hash, binding_hash = _hash(baseline_manifest), _hash(candidate_manifest), _hash(candidate_binding)
+    if baseline.get("raw_manifest_sha256") != base_hash or candidate.get("raw_manifest_sha256") != candidate_hash:
+        raise ValueError("evidence/raw manifest hash binding mismatch")
+    if candidate.get("split_freeze_sha256") != binding_hash:
+        raise ValueError("candidate evidence/split freeze hash binding mismatch")
+    verify_split_freeze(binding)
+    if (baseline.get("status"), baseline.get("protocol"), baseline.get("selected_measurement")) != (
+        "READY", "TEST_PUBLIC_RAW_MAPS_ONLY_NO_SELECTION_OR_CALIBRATION_MUTATION", "E1"):
+        raise ValueError("baseline evidence status/protocol mismatch")
+    if (base_maps.get("status"), base_maps.get("selected_measurement")) != ("TEST_PUBLIC_RAW_MAPS_ONLY", "E1"):
+        raise ValueError("baseline manifest status/protocol mismatch")
+    if (candidate.get("status"), candidate.get("protocol")) != (
+        "READY", "POST_HOC_PIPELINE_CORRECTION__ONE_SHOT_TESTPUB__NO_TUNING"):
+        raise ValueError("candidate evidence status/protocol mismatch")
+    if candidate_maps.get("status") != "SPLIT_E2_TEST_PUBLIC_RAW_MAPS":
+        raise ValueError("candidate manifest status/protocol mismatch")
+    if (binding.get("status"), binding.get("stage"), binding.get("protocol")) != (
+        "READY", "PRE_TEST_FREEZE", "SPLIT_ST_SOURCE_RESOLUTION__GLOBAL_STAE_CANONICAL_256__NO_TEST_ACCESS"):
+        raise ValueError("candidate freeze status/protocol mismatch")
+    if candidate_maps.get("freeze_sha256") != binding.get("freeze_sha256"):
+        raise ValueError("candidate manifest/freeze identifier mismatch")
+    if candidate.get("decision_id") != binding.get("decision_id") or candidate_maps.get("decision_id") != binding.get("decision_id"):
+        raise ValueError("candidate decision binding mismatch")
+    lineage = baseline.get("lineage")
+    manifest_lineage = base_maps.get("lineage")
+    if not isinstance(lineage, dict) or not isinstance(manifest_lineage, dict):
+        raise ValueError("baseline lineage missing")
+    keys = ("checkpoint_sha256", "sidecar_sha256", "metrics_sha256", "final_attempt_sha256", "identity_sha256", "pilot_sha256")
+    for key in keys:
+        if lineage.get(key) != manifest_lineage.get(key) or lineage.get(key) != binding.get(key):
+            raise ValueError(f"lineage binding mismatch: {key}")
+    checkpoint = lineage["checkpoint_sha256"]
+    if not isinstance(checkpoint, str) or not checkpoint:
+        raise ValueError("checkpoint lineage missing")
+    return checkpoint
+
+
 def _write_visuals(output_dir: Path, comparison: dict[str, Any], rows: list[dict[str, Any]],
                    baseline_label: str, candidate_label: str) -> tuple[Path, Path]:
-    baseline, candidate = comparison["baseline"], comparison["candidate"]
-    maximum = max(baseline, candidate, 1e-12)
-    bars = [(baseline_label, baseline, 130, "#64748b"), (candidate_label, candidate, 220, "#2563eb")]
-    body = []
-    for label, value, y, color in bars:
-        width = 480 * value / maximum
-        body.append(f'<text x="36" y="{y-12}" class="label">{escape(label)}</text>'
-                    f'<rect x="36" y="{y}" width="{width:.2f}" height="34" rx="6" fill="{color}"/>'
-                    f'<text x="{min(540, 48+width):.2f}" y="{y+24}" class="value">{value:.6f}</text>')
+    localization, detection = comparison["metrics"]["localization_au_pro_0_05"], comparison["metrics"]["image_auroc"]
+    def metric_row(y: int, title: str, detail: str, values: dict[str, Any]) -> str:
+        return (f'<text x="94" y="{y}" class="metric">{title}</text><text x="94" y="{y+23}" class="sub">{detail}</text>'
+                f'<text x="690" y="{y}" class="label" text-anchor="middle">{escape(baseline_label)}</text><text x="690" y="{y+27}" class="value" text-anchor="middle">{values["baseline"]:.6f}</text>'
+                f'<text x="930" y="{y}" class="label" text-anchor="middle">{escape(candidate_label)}</text><text x="930" y="{y+27}" class="value" text-anchor="middle">{values["candidate"]:.6f}</text>')
     metric_svg = output_dir / "metric-comparison.svg"
-    metric_svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">'
-                          '<style>text{font-family:system-ui,sans-serif;fill:#172033}.title{font-size:22px;font-weight:700}.sub{font-size:13px;fill:#526070}.label{font-size:14px;font-weight:600}.value{font-size:13px}</style>'
-                          '<rect width="100%" height="100%" fill="#f8fafc"/><text x="36" y="42" class="title">AU-PRO@0.05 평가 비교</text>'
-                          f'<text x="36" y="66" class="sub">동일 입력 결속 · 상대 변화 {comparison["relative_ratio"]:.2f}×</text>{"".join(body)}</svg>\n', encoding="utf-8")
+    metric_svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="360" viewBox="0 0 1120 360">'
+                          '<style>text{font-family:system-ui,sans-serif;fill:#172033}.title{font-size:22px;font-weight:700}.sub{font-size:13px;fill:#526070}.metric{font-size:16px;font-weight:700}.label{font-size:12px;font-weight:600;fill:#526070}.value{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}</style>'
+                          '<rect width="100%" height="100%" fill="#f8fafc"/><text x="560" y="48" class="title" text-anchor="middle">TESTpub 평가 비교</text>'
+                          '<text x="560" y="75" class="sub" text-anchor="middle">같은 입력·체크포인트 · 지표별 수치를 독립 표기</text>'
+                          '<line x1="58" y1="105" x2="1062" y2="105" stroke="#cbd5e1"/>'
+                          f'{metric_row(143, "Image AU-ROC", "이미지 단위 이상 순위 · raw map 최대값", detection)}'
+                          '<line x1="58" y1="211" x2="1062" y2="211" stroke="#cbd5e1"/>'
+                          f'{metric_row(249, "AU-PRO@0.05", "픽셀 위치화 · local evaluator", localization)}'
+                          '<text x="560" y="329" class="sub" text-anchor="middle">상대 막대는 서로 다른 지표의 크기를 혼동시킬 수 있어 사용하지 않았습니다.</text></svg>\n', encoding="utf-8")
 
     selected = sorted(rows, key=lambda row: (row["label"], row["review_rank"]))
     selected = [row for row in selected if row["review_rank"] <= 5]
@@ -122,16 +198,17 @@ def build_evaluation_history(*, baseline_evidence: Path, candidate_evidence: Pat
     labels = {value["label"] for value in base_stats.values()}
     if labels != {normal_label, anomaly_label}:
         raise ValueError(f"label mapping does not cover manifest labels: {sorted(labels)}")
-    baseline_checkpoints = {row.get("checkpoint_sha256") for row in base_maps["maps"]}
     binding = _read(candidate_binding)
-    if len(baseline_checkpoints) != 1 or None in baseline_checkpoints:
-        raise ValueError("baseline checkpoint binding missing or ambiguous")
-    if candidate.get("split_freeze_sha256") != _hash(candidate_binding):
-        raise ValueError("candidate evidence does not bind candidate binding file")
-    checkpoint_sha256 = next(iter(baseline_checkpoints))
-    if binding.get("checkpoint_sha256") != checkpoint_sha256:
-        raise ValueError("baseline/candidate checkpoint differs")
+    checkpoint_sha256 = _verify_input_bindings(baseline=baseline, candidate=candidate, base_maps=base_maps,
+                                                candidate_maps=candidate_maps, binding=binding,
+                                                baseline_manifest=baseline_manifest, candidate_manifest=candidate_manifest,
+                                                candidate_binding=candidate_binding)
+    baseline_checkpoints = {row.get("checkpoint_sha256") for row in base_maps["maps"]}
+    if baseline_checkpoints != {checkpoint_sha256}:
+        raise ValueError("baseline manifest checkpoint binding missing or ambiguous")
     identity_sha256 = _identity_sha256(base_stats)
+    baseline_image_auroc = _image_auroc(base_stats, normal_label=normal_label, anomaly_label=anomaly_label)
+    candidate_image_auroc = _image_auroc(candidate_stats, normal_label=normal_label, anomaly_label=anomaly_label)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     baseline_record = {
@@ -143,6 +220,12 @@ def build_evaluation_history(*, baseline_evidence: Path, candidate_evidence: Pat
         "command": baseline.get("command"),
         "protocol": baseline.get("protocol"),
         "sample_count": len(base_stats),
+        "metrics": {
+            "localization_au_pro_0_05": {"score": baseline_value, "metric_path": metric_path,
+                                          "scope": "pixel_localization"},
+            "image_auroc": {"score": baseline_image_auroc, "image_score": "max_raw_map",
+                              "implementation": "tie_aware_rank", "scope": "image_level_detection"},
+        },
     }
     comparison = {
         "schema_version": 1,
@@ -160,6 +243,16 @@ def build_evaluation_history(*, baseline_evidence: Path, candidate_evidence: Pat
         "classification_status": "NOT_COMPUTED_NO_FROZEN_THRESHOLD",
         "verified_bindings": {"checkpoint_sha256": checkpoint_sha256, "sample_identity_sha256": identity_sha256,
                               "candidate_binding_sha256": _hash(candidate_binding)},
+        "metrics": {
+            "localization_au_pro_0_05": {"baseline": baseline_value, "candidate": candidate_value,
+                                          "absolute_change": candidate_value - baseline_value,
+                                          "relative_ratio": candidate_value / baseline_value if baseline_value else None,
+                                          "metric_path": metric_path, "scope": "pixel_localization"},
+            "image_auroc": {"baseline": baseline_image_auroc, "candidate": candidate_image_auroc,
+                              "absolute_change": candidate_image_auroc - baseline_image_auroc,
+                              "image_score": "max_raw_map", "implementation": "tie_aware_rank",
+                              "scope": "image_level_detection"},
+        },
     }
 
     baseline_path = output_dir / "baseline_evaluation.json"

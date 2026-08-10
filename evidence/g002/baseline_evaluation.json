@@ -4,6 +4,19 @@
   "manifest_sha256": "94fcc9d29b00d00b076901f3a2a705b9ac8947ddc9c9ffcf6be1763559a9a083",
   "metric_path": "local_au_pro.output.au_pro_0_05",
   "metric_value": 0.02058176590668011,
+  "metrics": {
+    "image_auroc": {
+      "image_score": "max_raw_map",
+      "implementation": "tie_aware_rank",
+      "scope": "image_level_detection",
+      "score": 0.5953703703703703
+    },
+    "localization_au_pro_0_05": {
+      "metric_path": "local_au_pro.output.au_pro_0_05",
+      "scope": "pixel_localization",
+      "score": 0.02058176590668011
+    }
+  },
   "protocol": "TEST_PUBLIC_RAW_MAPS_ONLY_NO_SELECTION_OR_CALIBRATION_MUTATION",
   "sample_count": 114,
   "schema_version": 1

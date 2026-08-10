@@ -16,6 +16,7 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','system-architecture.svg','training-curve.svg']
     architecture=(public/'system-architecture.svg').read_text()
     assert 'width="1120" height="640"' in architecture and '국소 이상 맵' in architecture and '전역 이상 맵' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
+    assert 'x="560.0" y="610.0" class="t" text-anchor="middle">원시 이상 맵 → 검증 / TESTpub 평가</text>' in architecture
     assert str(tmp_path) not in ''.join(p.read_text() for p in public.iterdir())
 
 def test_preview_metadata_binds_each_png(tmp_path):

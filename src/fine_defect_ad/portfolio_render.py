@@ -42,8 +42,11 @@ def geometry_svg(freeze: dict) -> str:
 
 def architecture_svg() -> str:
     arrow = '<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3z" fill="#64748b"/></marker></defs>'
-    box = lambda x, y, w, h, fill, title, detail: (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="#64748b"/>'
-                                                       f'<text x="{x+20}" y="{y+38}" class="t">{title}</text><text x="{x+20}" y="{y+67}" class="s">{detail}</text>')
+    def box(x, y, w, h, fill, title, detail):
+        rect = f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="#64748b"/>'
+        if not detail:
+            return rect + f'<text x="{x+w/2}" y="{y+h/2+6}" class="t" text-anchor="middle">{title}</text>'
+        return rect + f'<text x="{x+20}" y="{y+38}" class="t">{title}</text><text x="{x+20}" y="{y+67}" class="s">{detail}</text>'
     body = ('<text x="48" y="48" class="t">E2-Split 고해상도 평가 경로</text>'
             '<text x="48" y="74" class="s">동일 EfficientAD-S 체크포인트 · 검증 데이터로만 분위수 동결</text>'
             + box(400, 105, 320, 84, '#ffffff', '고해상도 입력 이미지', '원본 해상도 유지')

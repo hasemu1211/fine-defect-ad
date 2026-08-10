@@ -13,8 +13,12 @@
 | 모델 체크포인트 | SHA-256 `9e7a5f567a83f42dacf80318df3d3bd33b7a7c922b1035bb529ecf59a4154801` | 실행 식별자와 결속 |
 | E2-Split 검증 원시 맵 | 19개, `READY` | `DEC-SPLIT-003`; 검증 정상 이미지 전용 |
 | E2-Split TESTpub 원시 맵 | 114개(정상 24 / 불량 90), `READY` | 동일 체크포인트의 고해상도 분할 경로 |
+| E2-Split TESTpub Image AU-ROC | 0.7347222222222223 | 이미지별 최종 원시 맵 최대값으로 이상 이미지를 순위화 |
 | E2-Split TESTpub AU-PRO@0.05 | 0.13268484492898858 | E1 대비 약 6.45배; AD2 서버·리더보드 결과 아님 |
+| E1 TESTpub Image AU-ROC | 0.5953703703703703 | 256×256 비교 기준선 |
 | E1 TESTpub AU-PRO@0.05 | 0.02058176590668011 | 256×256 비교 기준선 |
+
+Image AU-ROC는 동일 TESTpub 매니페스트의 `good`/`bad` 라벨과 각 이미지의 **최종 원시 맵 최대값**을 사용한 tie-aware 순위 지표입니다. AU-PRO@0.05는 픽셀 위치화 지표로 유지합니다. [EfficientAD 논문](https://openaccess.thecvf.com/content/WACV2024/html/Batzner_EfficientAD_Accurate_Visual_Anomaly_Detection_at_Millisecond-Level_Latencies_WACV_2024_paper.html)도 이미지 단위 detection AU-ROC와 위치화 성능을 분리해 보고합니다.
 
 ## E1 기준선 보정
 
@@ -54,7 +58,7 @@ FP/FN은 동결된 판정 임계값이 없으므로 계산하지 않습니다. �
 
 ## 한계
 
-- TESTpub은 학습·보정에 사용하지 않았고, local AU-PRO@0.05는 고정된 평가 산출 체인으로만 기록했습니다.
+- TESTpub은 학습·보정에 사용하지 않았고, Image AU-ROC와 local AU-PRO@0.05는 고정된 평가 산출 체인으로만 기록했습니다.
 - local AU-PRO@0.05 `0.13268484492898858`은 낮은 수치입니다. 재현 가능한 파이프라인과 평가 입력 결속의 증거이지 모델 성능의 강점으로 해석하지 않습니다.
 - `0.02058 → 0.13268` 변화는 동일 체크포인트에서 E1과 E2-Split을 비교한 사후 파이프라인 평가 결과이며 모델 재학습 성능 향상으로 해석하지 않습니다.
 - 256×256 기준 경로 보정 입력은 paired probe 맵과 canonical 맵이 바이트 단위로 동일하지 않은 수치 전처리 변형을 포함합니다. 관측된 최대 입력 차이는 `1.1920929e-7`이며, 해당 차이는 공개 성능 주장으로 해석하지 않습니다.

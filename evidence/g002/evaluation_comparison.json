@@ -10,6 +10,24 @@
   "change_scope": "pipeline_only_same_checkpoint",
   "classification_status": "NOT_COMPUTED_NO_FROZEN_THRESHOLD",
   "metric_path": "local_au_pro.output.au_pro_0_05",
+  "metrics": {
+    "image_auroc": {
+      "absolute_change": 0.13935185185185195,
+      "baseline": 0.5953703703703703,
+      "candidate": 0.7347222222222223,
+      "image_score": "max_raw_map",
+      "implementation": "tie_aware_rank",
+      "scope": "image_level_detection"
+    },
+    "localization_au_pro_0_05": {
+      "absolute_change": 0.11210307902230847,
+      "baseline": 0.02058176590668011,
+      "candidate": 0.13268484492898858,
+      "metric_path": "local_au_pro.output.au_pro_0_05",
+      "relative_ratio": 6.446718203413429,
+      "scope": "pixel_localization"
+    }
+  },
   "relative_ratio": 6.446718203413429,
   "schema_version": 1,
   "verified_bindings": {
