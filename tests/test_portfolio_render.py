@@ -12,7 +12,7 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     public=tmp_path/'public'; result=render(artifact_root=artifacts,dataset_root=None,run_id=run,public_dir=public,preview_dir=None)
     assert result['selected_geometry']=='E1'
     geometry=(public/'geometry-selection.svg').read_text()
-    assert 'height="300"' in geometry and '시임/원점: false' in geometry
+    assert 'height="330"' in geometry and '256×256 기준 경로' in geometry and '시임/원점 안정성: 미통과' in geometry and '분기 분리형 고해상도 타일링 후보' in geometry and 'DEC-SPLIT-003' in geometry
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','system-architecture.svg','training-curve.svg']
     assert str(tmp_path) not in ''.join(p.read_text() for p in public.iterdir())
 
