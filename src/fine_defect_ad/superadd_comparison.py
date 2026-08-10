@@ -17,6 +17,7 @@ from .g002_testpub_runtime import BAD_COUNT, GOOD_COUNT, test_public_entries
 from .gpu_lock import GpuLease
 from .mvtec_aupro import local_au_pro_0_05
 from .g002_pilot import LEASE_WRITE_BYTES
+from .g002_e2_runtime import SPLIT_TARGET_SHAPE
 from .pilot import host_rss_bytes
 from .storage import Allocation, READY, atomic_write, preflight
 from .superadd_hplus_probe import _load_pinned_superadd, _verify_anomalib_source
@@ -195,7 +196,7 @@ def persist_initial_attempt_latch(args: ComparisonArgs, binding: Mapping[str, st
 # Conservative published runner bound: 114 maps at 16384x16384 float32.  It is
 # intentionally larger than any admitted sheet-metal image, so TEST files need not
 # be opened to prove capacity before the one-shot latch.
-MAP_SHAPE = (1056, 4224)  # exact full geometry: 2 * admitted SPLIT_TARGET_SHAPE
+MAP_SHAPE = SPLIT_TARGET_SHAPE  # admitted evaluation/output geometry
 MAP_BYTES = MAP_SHAPE[0] * MAP_SHAPE[1] * 4
 MAX_TEST_MAP_BYTES = (GOOD_COUNT + BAD_COUNT) * MAP_BYTES * 2  # envelope + final raw <f4 coexist
 EVIDENCE_MARGIN_BYTES = 4 * 1024 * 1024
@@ -255,7 +256,7 @@ def _validate_recovery_manifest(root: Path, args: ComparisonArgs, binding: Mappi
         if sha256(raw).hexdigest() != digest or len(raw) != MAP_BYTES: raise ChallengerBlocked("recovery map bytes/hash mismatch")
         mapped = np.frombuffer(raw, dtype="<f4").reshape(shape)
         if not np.isfinite(mapped).all(): raise ChallengerBlocked("recovery map non-finite")
-        maps.append(mapped); masks.append(None if entry["mask"] is None else np.asarray(Image.open(entry["mask"]))); stats.append({"label": row["label"], "max": float(mapped.max())})
+        maps.append(mapped); masks.append(None if entry["mask"] is None else np.asarray(Image.open(entry["mask"]).resize((SPLIT_TARGET_SHAPE[1], SPLIT_TARGET_SHAPE[0]), Image.Resampling.NEAREST))); stats.append({"label": row["label"], "max": float(mapped.max())})
     return manifest_sha, lineage, rows, maps, masks, stats
 
 
@@ -471,8 +472,8 @@ def run_comparison(args: ComparisonArgs, *, admit: Callable[..., Any] = prefligh
         binding = {**binding, "train_bank_sha256": sha256(bank).hexdigest(), "frozen_train_sha256": _sha(frozen["train"]), "frozen_validation_sha256": _sha(frozen["validation"]), "evaluator_sha256": _hash(args.evaluator), "runner_source_sha256": _source_sha256(), "code_git_commit": _git_head()}
         validation = []
         for row in frozen["validation"]:
-            value, original = _tensor_image(category / row["path"], torch, device=device); fp32 = _map(model, value, torch, original); item = {"id_sha256": _anon(row["path"]), "fp32_map_sha256": sha256(np.asarray(fp32, dtype="<f4").tobytes()).hexdigest()}
-            try: item["fp16"] = parity_summary(fp32, _map(model, value, torch, original, fp16=True))
+            value, original = _tensor_image(category / row["path"], torch, device=device); fp32 = _map(model, value, torch, SPLIT_TARGET_SHAPE); item = {"id_sha256": _anon(row["path"]), "fp32_map_sha256": sha256(np.asarray(fp32, dtype="<f4").tobytes()).hexdigest()}
+            try: item["fp16"] = parity_summary(fp32, _map(model, value, torch, SPLIT_TARGET_SHAPE, fp16=True))
             except Exception as exc: fp16_error = type(exc).__name__; item["fp16"] = {"status": "DIAGNOSTIC_FAILED"}
             validation.append(item)
         validation_record = {"count": VALIDATION_COUNT, "selected_precision": "fp32", "fp16_status": "DIAGNOSTIC_FAILED" if fp16_error else "DIAGNOSTIC_COMPLETE", "maps": validation}
@@ -488,7 +489,7 @@ def run_comparison(args: ComparisonArgs, *, admit: Callable[..., Any] = prefligh
             orphan = _adopt_orphan(root, args, index, entry, latch["sha256"], binding, admit=admit, writer=writer)
             if orphan is not None:
                 rows.append(orphan); _checkpoint_progress(root, args, binding, rows, admit=admit, writer=writer); continue
-            begin = time.perf_counter(); value, original = _tensor_image(entry["source"], torch, device=device); mapped = np.asarray(_map(model, value, torch, original), dtype="<f4")
+            begin = time.perf_counter(); value, original = _tensor_image(entry["source"], torch, device=device); mapped = np.asarray(_map(model, value, torch, SPLIT_TARGET_SHAPE), dtype="<f4")
             if tuple(mapped.shape) != MAP_SHAPE: raise ChallengerBlocked("TESTpub map geometry differs from admitted sheet-metal contract")
             raw = mapped.tobytes(order="C"); latencies.append(time.perf_counter() - begin)
             rows.append({"index": index, "id_sha256": _anon(entry["image_identity"]), "label": entry["label"], "source_sha256": entry["source_sha256"], "mask_sha256": entry["mask_sha256"], "map_sha256": sha256(raw).hexdigest(), "dtype": "<f4", "shape": list(mapped.shape), "byte_order": "<", "latency_seconds": latencies[-1], "_bytes": raw})
@@ -497,7 +498,7 @@ def run_comparison(args: ComparisonArgs, *, admit: Callable[..., Any] = prefligh
         measured_latencies = [float(row["latency_seconds"]) for row in rows if isinstance(row.get("latency_seconds"), (int, float))]
         if not measured_latencies: raise ChallengerBlocked("no measured TESTpub latencies remain after recovery")
         latencies = measured_latencies
-        masks = [None if entry["mask"] is None else np.asarray(Image.open(entry["mask"])) for entry in entries]
+        masks = [None if entry["mask"] is None else np.asarray(Image.open(entry["mask"]).resize((SPLIT_TARGET_SHAPE[1], SPLIT_TARGET_SHAPE[0]), Image.Resampling.NEAREST)) for entry in entries]
         persisted = _write_maps(root, args, rows, binding, admit=admit, writer=writer)
         metric = evaluator_fn(maps, masks, args.evaluator, include_curve=False)
         stats = [{"label": row["label"], "max": float(mapped.max())} for row, mapped in zip(rows, maps)]

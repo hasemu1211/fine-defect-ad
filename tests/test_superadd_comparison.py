@@ -70,8 +70,8 @@ def test_bank_is_inference_only_then_model_enters_eval_for_maps():
     assert source.rindex("with torch.inference_mode():", 0, source.index("model.subsample_embedding()")) < source.index("model.subsample_embedding()") < source.index("model.eval()")
 
 def test_sheet_metal_storage_bound_and_geometry_contract():
-    assert subject.MAP_SHAPE == (1056, 4224)
-    assert subject.MAX_TEST_MAP_BYTES == 2 * 114 * 1056 * 4224 * 4
+    assert subject.MAP_SHAPE == subject.SPLIT_TARGET_SHAPE == (528, 2112)
+    assert subject.MAX_TEST_MAP_BYTES == 2 * 114 * 528 * 2112 * 4
     assert subject.MAX_TEST_MAP_BYTES < 5 * 1024**3
 
 def test_progress_rows_without_bytes_finalize_manifest(tmp_path):
