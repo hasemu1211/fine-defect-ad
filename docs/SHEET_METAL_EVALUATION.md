@@ -1,5 +1,7 @@
 # Sheet-metal 결함 평가
 
+> 공개 재현 명령은 도메인 이름 wrapper를 사용합니다. 과거 evidence 파일명·내부 단계 ID·복구 provenance에 남은 식별자는 immutable 기록이므로 변경하지 않으며, wrapper가 그 검증된 내부 구현을 그대로 호출합니다.
+
 ## 범위
 
 이 문서는 EfficientAD-S Small의 학습 산출물과 **E2-Split — 고해상도 분할 추론**의 검증·TESTpub 평가를 기록합니다. E1 — 256×256 기준 추론은 같은 체크포인트의 비교 기준선이며, 이전 전체 분기 타일링 경로(legacy E2)는 별도 개선 이력으로 분리합니다. 최종 성능 평가나 운영 배포 판정 문서가 아닙니다.
@@ -138,7 +140,7 @@ PYTHONPATH=src python3 -m fine_defect_ad.highres_split validation \
 256×256 기준 경로(내부 CLI 식별자 `E1`)의 검증 맵을 생성합니다.
 
 ```bash
-PYTHONPATH=src python3 -m fine_defect_ad.g002_eval_runtime \
+PYTHONPATH=src python3 -m fine_defect_ad.evaluate \
   --artifact-root "$ARTIFACT_ROOT" --checkpoint "$CHECKPOINT" --sidecar "$SIDECAR" \
   --metrics "$METRICS" --final-attempt "$FINAL_ATTEMPT" \
   --training-identity "$TRAINING_IDENTITY" --dataset-root "$DATASET_ROOT" \
@@ -149,7 +151,7 @@ PYTHONPATH=src python3 -m fine_defect_ad.g002_eval_runtime \
 전체 분기 타일링 경로(legacy CLI 식별자 `E2`)의 원시 맵과 기하 동결 증거를 생성합니다.
 
 ```bash
-PYTHONPATH=src python3 -m fine_defect_ad.g002_e2_runtime \
+PYTHONPATH=src python3 -m fine_defect_ad.highres_evaluate \
   --artifact-root "$ARTIFACT_ROOT" --checkpoint "$CHECKPOINT" --sidecar "$SIDECAR" \
   --metrics "$METRICS" --final-attempt "$FINAL_ATTEMPT" \
   --training-identity "$TRAINING_IDENTITY" --dataset-root "$DATASET_ROOT" \
@@ -169,10 +171,10 @@ CALIBRATION_ARGS=(
   --geometry-evidence-sha256 "$GEOMETRY_EVIDENCE_SHA256"
   --geometry-decision-id "$GEOMETRY_DECISION_ID" --pretest-freeze "$PRETEST_FREEZE"
 )
-BINDING_JSON="$(PYTHONPATH=src python3 -m fine_defect_ad.g002_calibration \
+BINDING_JSON="$(PYTHONPATH=src python3 -m fine_defect_ad.calibrate \
   "${CALIBRATION_ARGS[@]}" --build-post-selection-binding)"
 export POST_SELECTION_BINDING="$(printf '%s' "$BINDING_JSON" | \
   python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"])')"
-PYTHONPATH=src python3 -m fine_defect_ad.g002_calibration \
+PYTHONPATH=src python3 -m fine_defect_ad.calibrate \
   "${CALIBRATION_ARGS[@]}" --post-selection-binding "$POST_SELECTION_BINDING"
 ```
