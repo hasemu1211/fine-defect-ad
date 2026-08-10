@@ -96,8 +96,8 @@ class G002OverlayDataSmokeTests(unittest.TestCase):
     def test_scoped_samples_transform_and_collate_without_test_access(self):
         """Runs only when the separately installed overlay is available; never fits."""
         import os, shutil, subprocess, textwrap
-        python = Path("/home/codelab/Desktop/Project/WNTAD/.venv/bin/python")
-        if not python.exists() or not Path(".internal/venv/r1-overlay/anomalib").is_dir():
+        python = Path(os.environ.get("FINE_DEFECT_OVERLAY_PYTHON", ""))
+        if not python.is_file() or not Path(".internal/venv/r1-overlay/anomalib").is_dir():
             self.skipTest("R1 overlay is unavailable")
         script = r'''
 import base64, tempfile

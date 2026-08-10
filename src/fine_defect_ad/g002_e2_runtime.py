@@ -551,14 +551,9 @@ def split_branch_raw_maps(rgb: Any, model: Any, torch: Any, *, device: Any | Non
                                "weight_max": float(weights.max())}
 
 
-def split_quantiles(local_maps: Iterable[Any], global_maps: Iterable[Any]) -> dict[str, float]:
+def split_quantiles(local_maps: Iterable[Any], global_maps: Iterable[Any], *, torch_module: Any | None = None) -> dict[str, float]:
     """Fresh q90/q99.5 calibration; checkpoint quantiles are never consulted."""
     np = _np()
-    def quantile(value: Any, q: float) -> float:
-        try:
-            return float(np.quantile(value, q, method="linear"))
-        except TypeError:
-            return float(np.quantile(value, q, interpolation="linear"))
     def values(items: Iterable[Any], name: str) -> tuple[float, float]:
         data = [np.asarray(item, dtype=np.float32).ravel() for item in items]
         if not data:
@@ -566,7 +561,17 @@ def split_quantiles(local_maps: Iterable[Any], global_maps: Iterable[Any]) -> di
         joined = np.concatenate(data).astype(np.float32, copy=False)
         if not bool(np.isfinite(joined).all()):
             raise ValueError(f"{name} validation maps must be finite")
-        qa, qb = quantile(joined, .90), quantile(joined, .995)
+        if torch_module is not None:
+            tensor = torch_module.from_numpy(joined)
+            values = torch_module.quantile(tensor, torch_module.tensor((.90, .995), dtype=tensor.dtype)).cpu().numpy()
+        else:
+            # Dependency-free replay of the production freeze's float32 ranks.
+            ranks = np.asarray((.90, .995), dtype=np.float32) * np.float32(joined.size - 1)
+            lower = np.floor(ranks).astype(np.intp)
+            upper = np.ceil(ranks).astype(np.intp)
+            ordered = np.partition(joined, tuple(sorted(set(lower.tolist() + upper.tolist()))))
+            values = ordered[lower] + (ordered[upper] - ordered[lower]) * (ranks - lower.astype(np.float32))
+        qa, qb = map(float, values)
         if not np.isfinite(qa) or not np.isfinite(qb) or not qb > qa:
             raise ValueError(f"{name} q99.5 must be greater than q90")
         return qa, qb

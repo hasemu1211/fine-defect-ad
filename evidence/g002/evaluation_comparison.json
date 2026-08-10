@@ -1,0 +1,20 @@
+{
+  "absolute_change": 0.11210307902230847,
+  "baseline": 0.02058176590668011,
+  "baseline_evidence_sha256": "bfd104d65d79946b4aab9620e5b975d86061cc1cff255eb6f98daf41bae52a56",
+  "baseline_manifest_sha256": "94fcc9d29b00d00b076901f3a2a705b9ac8947ddc9c9ffcf6be1763559a9a083",
+  "candidate": 0.13268484492898858,
+  "candidate_evidence_sha256": "1be1dc9be407f5c0efeed526a3763f98ad08a1bd1aeb8c806f6282435022b0b2",
+  "candidate_manifest_sha256": "62901bcbadcfdce167b8d646e22e2f993b120eb6a20378f84a70afa822e1e03c",
+  "change_description": "동일 체크포인트에서 256x256 경로를 고해상도 split ST와 전역 STAE 결합 경로로 교체",
+  "change_scope": "pipeline_only_same_checkpoint",
+  "classification_status": "NOT_COMPUTED_NO_FROZEN_THRESHOLD",
+  "metric_path": "local_au_pro.output.au_pro_0_05",
+  "relative_ratio": 6.446718203413429,
+  "schema_version": 1,
+  "verified_bindings": {
+    "candidate_binding_sha256": "3f1b573c1788fd9644ba635368f793969695524a75698648d8b631c2d7a7845c",
+    "checkpoint_sha256": "9e7a5f567a83f42dacf80318df3d3bd33b7a7c922b1035bb529ecf59a4154801",
+    "sample_identity_sha256": "2a5bca8fff1c9d38eb659f7c29941f19696e3f54a008b1d4a1705aa4b36b8774"
+  }
+}

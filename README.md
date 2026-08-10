@@ -28,23 +28,28 @@
 
 - **E1 선택**: E2는 map border 80 px를 시도한 뒤 두 번째 경험적 border 60 px로 재측정했지만 `REVISION_UNSTABLE_RETAIN_E1` 상태였습니다. 시임 검증이 불안정하여, 계층적 비가중 검증 규칙이 E1을 선택했습니다.
 - **검증/시험 분리**: 임계값 계산에는 검증 정상 이미지의 원시 점수만 사용합니다. TESTpub·TESTpriv·OOD 입력은 보정 경로에서 차단됩니다.
-- **판정 보류**: 검증 가능한 외부 비교기 프로토콜이 없으므로 비교기, F1, 이미지·픽셀 판정, TESTpub 감사는 의도적으로 차단됩니다.
 
 ## 검증 결과
 
-| 항목 | 확인된 결과 |
-| --- | --- |
-| 학습 모델 | EfficientAD-S Small, 70,000 step |
-| 최종 학습 손실 / 처리량 | 2.16434598 / 7.4513 step/s |
-| 체크포인트 SHA-256 | `9e7a5f567a83f42d…a4154801` |
-| E1 검증 | `READY`, 원시 맵 19개 |
-| E2 검증 | `READY`, 전체 해상도 원시 맵 19개, 241.286 s |
-| TESTpub 원시 맵 추출 | `READY`, 114개(정상 24 / 불량 90), 20.523 s |
-| TESTpub local AU-PRO@0.05 | 0.02058176590668011 | MVTec AD evaluator v1.0, AD2 서버·리더보드 결과 아님 |
-| 선택된 측정 | E1 |
-| 원시 임계값 | 0.20741951395977676 (`mean + 3 × population std`) |
+| 항목 | 결과 | 해석 |
+| --- | --- | --- |
+| 학습 모델 | EfficientAD-S Small, 70,000 step | 동일 체크포인트로 평가 |
+| 최종 학습 손실 / 처리량 | 2.16434598 / 7.4513 step/s | 최종 학습 이력 |
+| 체크포인트 SHA-256 | `9e7a5f567a83f42d…a4154801` | 실행 식별자와 결속 |
+| E1 검증 | `READY`, 원시 맵 19개 | 기존 256×256 경로 |
+| Split E2 검증 | `READY`, 원시 맵 19개 | 고해상도 local ST + 전역 STAE |
+| E1 TESTpub AU-PRO@0.05 | 0.02058176590668011 | 최초 평가 기준선 |
+| Split E2 TESTpub AU-PRO@0.05 | 0.13268484492898858 | 동일 모델의 파이프라인 변경 결과, 약 6.45배 |
+| 기존 기하 선택 | E1 | 기존 검증 규칙의 선택은 변경하지 않음 |
+| 원시 임계값 | 0.20741951395977676 | E1 검증 정상 점수의 `mean + 3σ` |
+
+![동일 체크포인트 평가 비교](evidence/g002/metric-comparison.svg)
+
+![오류 검토 우선순위](evidence/g002/review-priority.svg)
 
 수치의 근거, 입력 결속, 한계는 [G002 평가 상세](docs/G002_EVALUATION.md)에서 확인할 수 있습니다.
+
+최초 평가와 파이프라인 변경 비교는 [기준선](evidence/g002/baseline_evaluation.json), [평가 비교](evidence/g002/evaluation_comparison.json), [검토 우선 사례](evidence/g002/error_cases.csv)에 공개합니다. 원본 데이터와 대용량 맵은 라이선스·용량 때문에 포함하지 않고 해시만 제공합니다.
 
 ## 빠른 실행
 
@@ -54,6 +59,7 @@ python3 -m pytest -q
 export ARTIFACT_ROOT=/path/to/artifacts
 export DATASET_ROOT=/path/to/dataset
 PYTHONPATH=src python3 -m fine_defect_ad.g002_eval_runtime --help
+PYTHONPATH=src python3 -m fine_defect_ad.evaluation_history --help
 ```
 
 실제 평가에는 학습 체크포인트, teacher 가중치, Imagenette, GPU lease 디렉터리가 필요합니다. 전체 재현 명령은 [평가 문서](docs/G002_EVALUATION.md#재현)를 따릅니다.
@@ -64,8 +70,10 @@ PYTHONPATH=src python3 -m fine_defect_ad.g002_eval_runtime --help
 src/fine_defect_ad/  학습, 검증, 기하 검증, 보정 런타임
 tests/               단위·통합 회귀 테스트
 docs/                공개 포트폴리오 문서와 도식
+evidence/            공개 가능한 평가 기준선·비교·입력 해시
 ```
 
 ## 상세 문서
 
 - [G002 평가와 한계](docs/G002_EVALUATION.md)
+- [라이선스와 출처](LICENSES.md)

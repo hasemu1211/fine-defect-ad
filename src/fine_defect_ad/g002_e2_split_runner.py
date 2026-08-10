@@ -49,8 +49,12 @@ def _failure_log_path(root: Path, run_id: str, payload: bytes) -> Path:
     return root / f"g002-e2-split-testpub-FAILED-{run_id}-{digest}.json"
 
 
+def _failure_logs(root: Path, run_id: str) -> list[Path]:
+    return sorted(root.glob(f"g002-e2-split-testpub-FAILED-{run_id}-*"))
+
+
 def _attempt_recovery(root: Path, run_id: str, latch_path: Path) -> dict[str, str] | None:
-    logs = sorted(root.glob(f"g002-e2-split-testpub-FAILED-{run_id}-*.json"))
+    logs = _failure_logs(root, run_id)
     if not logs:
         return None
     attempt_payload = {"attempt_latch_sha256": sha256(latch_path.read_bytes()).hexdigest(),
@@ -83,7 +87,7 @@ def run_validation(args: Any) -> dict[str, Any]:
             _write(root,args.run_id,f"g002-e2-split-validation-{args.run_id}-stae-{index:02d}-{gh}.bin",global_raw)
             rows.append({"image_identity":identity,"source_sha256":source_hash,"local_st_sha256":lh,"global_stae_sha256":gh,"local_st_shape":list(local.shape),"global_stae_shape":list(global_.shape),"_local_st":local,"_global_stae":global_})
             locals_.append(local); globals_.append(global_)
-        quantiles=split_quantiles(locals_,globals_)
+        quantiles=split_quantiles(locals_,globals_,torch_module=torch)
         freeze=freeze_split_validation(admitted=admitted,quantiles=quantiles,map_rows=rows,geometry=geometry)
         path=_write(root,args.run_id,f"g002-e2-split-pretest-freeze-{args.run_id}-{freeze['freeze_sha256']}.json",_canon(freeze))
     return {"status":"READY","decision_id":SPLIT_DECISION_ID,"freeze":str(path),"freeze_sha256":freeze["freeze_sha256"],"quantiles":quantiles,"validation_maps":19}
@@ -96,7 +100,7 @@ def run_test_public_once(args: Any) -> dict[str, Any]:
     latch_path = root / f"g002-e2-split-testpub-ATTEMPTED-{args.run_id}.json"
     if any(root.glob("g002-e2-split-testpub-evidence-*.json")):
         raise ValueError("TESTpub one-shot already consumed")
-    if latch_path.exists() and not any(root.glob(f"g002-e2-split-testpub-FAILED-{args.run_id}-*.json")):
+    if latch_path.exists() and not _failure_logs(root, args.run_id):
         raise ValueError("TESTpub one-shot already consumed")
     latch = latch_path if latch_path.exists() else _write(root,args.run_id,f"g002-e2-split-testpub-ATTEMPTED-{args.run_id}.json",_canon({"decision_id":SPLIT_DECISION_ID,"freeze_sha256":freeze["freeze_sha256"],"status":"ATTEMPTED"}))
     # The latch is persisted before the first test image is decoded.

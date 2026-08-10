@@ -1,14 +1,9 @@
-# License and provenance record (R0)
+# 라이선스와 출처
 
-- **Project code:** no project license has been selected. This is a public-release blocker; no public distribution claim is made.
-- **MVTec AD 2:** external dataset access and its license/terms must be accepted and recorded before use. No dataset body or redistribution is included here.
-- **anomalib / EfficientAD:** candidate only. Upstream license, version, acquisition evidence, and redistribution/weight terms remain pending; no upstream license text is copied here.
-- **SuperADD:** candidate only. License, access, and redistribution terms remain pending.
-- **DINO:** candidate only. License, access, model-weight, and redistribution terms remain pending.
-- **NVIDIA Triton NGC container:** NVIDIA NGC terms govern access and use of `nvcr.io/nvidia/tritonserver:26.06-pyt-python-py3@sha256:80caf7d0be25520d39c5162cdeec1f6b2febe4ab774d7b25138cd602d624db3a` for `linux/amd64`. No interactive terms acceptance was observed or asserted. The pinned image was pulled and used only for the recorded R0 smoke; it is not redistributed.
-
-## R1 non-MVTec upstream assets
-
-- **anomalib code:** Apache-2.0 (`https://github.com/open-edge-platform/anomalib`).
-- **Imagenette:** Apache-2.0 (`https://s3.amazonaws.com/fast-ai-imageclas/imagenette2.tgz`).
-- **EfficientAD pretrained teacher release asset:** no separately verified weight license was found or asserted. It is restricted here to internal noncommercial evaluation; no redistribution or commercial-rights claim is made.
+- **프로젝트 코드:** 공개 포트폴리오 열람용입니다. 별도 오픈소스 라이선스를 부여하지 않았으므로 재사용 권한을 주장하지 않습니다.
+- **MVTec AD 2:** 데이터셋 본문과 원본 이미지를 저장소에 포함하지 않습니다. 사용자는 공식 접근 조건과 라이선스를 따라야 합니다.
+- **anomalib / EfficientAD:** anomalib 코드는 Apache-2.0입니다. 이 저장소는 패키지 자체를 재배포하지 않습니다.
+- **EfficientAD 사전학습 teacher:** 별도의 가중치 라이선스를 확인하지 못해 가중치를 공개하지 않습니다.
+- **Imagenette:** Apache-2.0 배포 조건을 따르며 데이터 본문을 포함하지 않습니다.
+- **SuperADD / DINO:** 후속 비교 후보입니다. 코드나 가중치를 포함하기 전 해당 라이선스를 별도로 검증합니다.
+- **NVIDIA Triton 컨테이너:** NVIDIA NGC 조건을 따릅니다. 고정 이미지 식별자는 재현 정보일 뿐 컨테이너를 재배포하지 않습니다.

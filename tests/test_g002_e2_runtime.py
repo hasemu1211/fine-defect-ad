@@ -198,7 +198,48 @@ def test_split_branch_hann_terminal_coverage_and_fresh_quantiles():
   y,x,y2,x2=box;coverage[y:y2,x:x2] += weight
  assert coverage.min() > 0
  q=split_quantiles([np.arange(100,dtype=np.float32)], [np.arange(100,dtype=np.float32)+.5])
- assert q['qb_st'] > q['qa_st'] and q['qb_stae'] > q['qa_stae']
+ assert q == {'qa_st':89.0999984741211,'qb_st':98.50499725341797,'qa_stae':89.5999984741211,'qb_stae':99.00499725341797}
+
+
+def test_split_recovery_accepts_persisted_original_log():
+ from fine_defect_ad.g002_e2_split_runner import _attempt_recovery
+ with TemporaryDirectory() as directory:
+  root=Path(directory); run_id='run'; latch=root/f'g002-e2-split-testpub-ATTEMPTED-{run_id}.json'; latch.write_bytes(b'latch')
+  failure=root/f'g002-e2-split-testpub-FAILED-{run_id}-original.log'; failure.write_bytes(b'original failure')
+  recovery=_attempt_recovery(root,run_id,latch)
+  assert recovery and recovery['attempt_latch_sha256']==sha256(b'latch').hexdigest()
+  assert recovery['original_failure_log_sha256']==sha256(b'original failure').hexdigest() and recovery['code_fix_commit']
+
+
+def test_split_quantiles_production_path_uses_torch_contract():
+ torch=pytest.importorskip('torch')
+ from fine_defect_ad.g002_e2_runtime import split_quantiles
+ values=np.asarray([-.00053567,.0001049],dtype=np.float32)
+ q=split_quantiles([values],[values+.5],torch_module=torch)
+ assert q['qa_st']==float(torch.quantile(torch.from_numpy(values),.90))
+ assert q['qb_st']==float(torch.quantile(torch.from_numpy(values),.995))
+
+
+def test_split_testpub_retry_gate_accepts_persisted_log(monkeypatch):
+ import sys
+ from types import SimpleNamespace
+ import fine_defect_ad.g002_e2_split_runner as module
+ with TemporaryDirectory() as directory:
+  root=Path(directory); run_id='run'; freeze=root/'freeze.json'; freeze.write_text(json.dumps({'freeze_sha256':'f'*64}))
+  latch=root/f'g002-e2-split-testpub-ATTEMPTED-{run_id}.json'; latch.write_bytes(b'latch')
+  failure=root/f'g002-e2-split-testpub-FAILED-{run_id}-original.log'; failure.write_bytes(b'original failure')
+  fake_torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:True),device=lambda value:value)
+  monkeypatch.setitem(sys.modules,'torch',fake_torch); monkeypatch.setattr(module,'verify_split_freeze',lambda value:None)
+  monkeypatch.setattr(module,'GpuLease',lambda *args,**kwargs:nullcontext()); monkeypatch.setattr(module,'_model',lambda *args:(None,object()))
+  monkeypatch.setattr(module,'test_public_entries',lambda root:[])
+  def write(target_root,_run_id,name,data):
+   path=target_root/name; path.write_bytes(data); return path
+  monkeypatch.setattr(module,'_write',write)
+  monkeypatch.setattr(module,'evaluate_persisted_split_test_public',lambda **kwargs:{'status':'READY','recovery':kwargs['recovery']})
+  evaluator=root/'evaluator'; evaluator.write_bytes(b'evaluator')
+  args=SimpleNamespace(artifact_root=root,split_freeze=freeze,run_id=run_id,lease_directory=root/'lease',dataset_root=root,evaluator=evaluator)
+  result=module.run_test_public_once(args)
+  assert result['recovery']['original_failure_log_sha256']==sha256(failure.read_bytes()).hexdigest()
 
 
 def test_split_branch_local_matches_get_maps_st_and_never_calls_ae_per_tile():

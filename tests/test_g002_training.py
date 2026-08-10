@@ -276,8 +276,8 @@ class TrainingArtifactTests(TestCase):
 
     def test_trusted_resume_loader_accepts_path_checkpoint_when_overlay_available(self):
         import os, subprocess, sys, textwrap
-        python=Path('/home/codelab/Desktop/Project/WNTAD/.venv/bin/python')
-        if not python.exists(): self.skipTest('overlay interpreter unavailable')
+        python=Path(os.environ.get('FINE_DEFECT_OVERLAY_PYTHON',''))
+        if not python.is_file(): self.skipTest('FINE_DEFECT_OVERLAY_PYTHON unavailable')
         code='''from pathlib import Path
 import tempfile, torch
 from fine_defect_ad.g002_training import trusted_resume_checkpoint_io
