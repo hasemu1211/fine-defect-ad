@@ -1,28 +1,28 @@
 # FineDefect AD
 
-**제조 sheet-metal 이상 탐지에서 256×256 기준선, 고해상도 분할 경로, TensorRT/Triton 후보, 그리고 고정된 SuperADD ViT-S challenger를 같은 증거 경계에서 비교한 포트폴리오입니다.** 운영 배포·SOTA·임계값 기반 판정은 주장하지 않습니다.
+**제조 sheet-metal 이상 탐지의 두 독립 파이프라인—EfficientAD E2-Split+TensorRT/Triton과 SuperADD/DINOv3—를 동일 TESTpub 114, 익명 ID, 528×2112 raw-map geometry, 공식 evaluator, SHA-256 결속으로 비교하는 재현 포트폴리오입니다.** 운영 배포·SOTA·최종 모델 선택·일반화 우열·임계값 기반 판정은 주장하지 않습니다.
 
-![후보 비교: raw-map-only evidence](docs/assets/candidate-comparison.svg)
+![독립 파이프라인 비교: raw-map-only evidence](docs/assets/candidate-comparison.svg)
 
-## 문제와 비교 경계
+## 독립 파이프라인과 비교 경계
 
 정상 이미지로만 bank/보정 경계를 고정하고, TESTpub은 한 번의 raw-map 평가에만 사용했습니다. 아래 수치는 재학습·TEST tuning·threshold 선택 없이 기록된 연속 점수의 Image AU-ROC/AU-PRO@0.05입니다. 지연은 서로 다른 evidence scope(단일 E2-Split 대표 이미지와 SuperADD 114장 inference 분포)라 직접 비교하거나 속도 우위로 해석하지 않습니다.
 
 | 경로 | Image AU-ROC | AU-PRO@0.05 | 지연 | 해석 |
 | --- | ---: | ---: | ---: | --- |
 | 256×256 기준선 | 0.595370 | 0.020582 | — | 동일 EfficientAD-S checkpoint의 기준 |
-| E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 대표 단일 고해상도 이미지 2.1040 s | 고해상도 분할 backend 후보 |
-| SuperADD ViT-S direct/posthoc | **0.83935185** | **0.43140701** | **114장 inference: mean 1.1414 s, p50 1.0242 s/image** | evidence-only challenger |
+| EfficientAD E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 대표 단일 고해상도 이미지 2.1040 s | 독립 구현/검증 경로 |
+| SuperADD ViT-S / DINOv3 direct/posthoc | **0.83935185** | **0.43140701** | **114장 inference: mean 1.1414 s, p50 1.0242 s/image** | 독립 비교 파이프라인 |
 
-## 경로 진화와 선택
+## 구현·비교 체계
 
-1. **256×256 기준선** — 고정 checkpoint의 비교 기준입니다.
-2. **E2-Split** — 원본을 256×256 타일로 분할하고 국소/전역 raw anomaly map을 결합했습니다.
-3. **TensorRT/Triton 후보** — 같은 E2-Split 경로에서 2.1040 s/image와 수치 보존을 확인했지만, 후보 backend 평가일 뿐 운영 승격이 아닙니다.
-4. **SuperADD challenger** — pinned ViT-S, one-pass normal bank, FP32 선택과 posthoc 528×2112 evaluation geometry로 기록했습니다. 위의 metric/latency evidence 때문에 direct candidate로 선택합니다.
-5. **Serving 결정: NO-GO** — DINO export, feature/final-map parity, bank serialization proof가 검증되지 않았습니다. 이 proof 없이 Triton serving 경로를 추가하지 않습니다.
+1. **EfficientAD E2-Split + TensorRT/Triton** — 고해상도 타일, TensorRT FP32 plan, Triton HTTP transport의 구현과 수치 보존을 기록합니다.
+2. **SuperADD/DINOv3** — pinned ViT-S, one-pass normal bank, FP32 및 posthoc 528×2112 evaluation geometry의 독립 비교 파이프라인입니다.
+3. **재현 비교 경계** — 두 결과는 동일 TESTpub 114, 익명화 ID, 528×2112 raw-map, 공식 evaluator, 해시 결속을 사용합니다. metric 차이는 이 고정 비교의 기록이며 SOTA·운영 최종선정·일반화 우열을 뜻하지 않습니다.
+4. **배포 범위** — SuperADD의 Triton 연결은 현재 비교 연구 범위 밖입니다. DINO export, feature/final-map parity, bank serialization은 별도 배포 검증이 필요합니다.
 
-![후보 architecture / data flow](docs/assets/system-architecture.svg)
+![파이프라인 architecture / data flow](docs/assets/system-architecture.svg)
+
 
 ## 공개 시각화 경계
 

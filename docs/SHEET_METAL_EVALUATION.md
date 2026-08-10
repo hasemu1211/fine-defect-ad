@@ -2,6 +2,8 @@
 
 > 공개 재현 명령은 도메인 이름 wrapper를 사용합니다. 과거 evidence 파일명·내부 단계 ID·복구 provenance에 남은 식별자는 immutable 기록이므로 변경하지 않으며, wrapper가 그 검증된 내부 구현을 그대로 호출합니다.
 
+> 이 문서의 EfficientAD 경로는 SuperADD/DINOv3 독립 비교 파이프라인과 동일 TESTpub 114·익명 ID·528×2112 raw-map·공식 evaluator·해시 결속 비교체계 안에서 읽습니다. 수치 비교는 고정 evidence의 기록일 뿐 SOTA·운영 최종선정·일반화 우열을 주장하지 않습니다. SuperADD의 Triton 연결은 현재 비교 범위 밖이며 별도 배포 검증이 필요합니다.
+
 ## 범위
 
 이 문서는 EfficientAD-S Small의 학습 산출물과 **E2-Split — 고해상도 분할 추론**의 검증·TESTpub 평가를 기록합니다. E1 — 256×256 기준 추론은 같은 체크포인트의 비교 기준선이며, 이전 전체 분기 타일링 경로(legacy E2)는 별도 개선 이력으로 분리합니다. 최종 성능 평가나 운영 배포 판정 문서가 아닙니다.

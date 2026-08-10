@@ -183,5 +183,5 @@ if __name__=='__main__': main()
 
 
 def candidate_comparison_svg() -> str:
-    """Raw-map-only SuperADD comparison; latency scopes are intentionally separate."""
-    return _svg(1120, 180, '<text x="48" y="48" class="t">SuperADD evidence candidate</text><text x="48" y="78" class="s">Image AU-ROC 0.83935185 · AU-PRO@0.05 0.43140701</text><text x="48" y="108" class="s">SuperADD 114-image inference: mean 1.1414 s, p50 1.0242 s; E2-Split representative single image: 2.1040 s</text><text x="48" y="140" class="n">Latency scopes are not directly comparable. Serving NO-GO: export, feature/final-map parity, and bank serialization proof absent.</text>')
+    """Raw-map-only independent pipeline comparison; latency scopes are separate."""
+    return _svg(1120, 180, '<text x="48" y="48" class="t">Independent pipeline comparison</text><text x="48" y="78" class="s">SuperADD/DINOv3: Image AU-ROC 0.83935185 · AU-PRO@0.05 0.43140701</text><text x="48" y="108" class="s">Same TESTpub 114 · anonymized IDs · 528×2112 · official evaluator · hash bindings</text><text x="48" y="140" class="n">Latency scopes are not directly comparable. SuperADD Triton is outside current comparison scope; separate deployment validation required.</text>')

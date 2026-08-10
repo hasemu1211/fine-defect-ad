@@ -61,4 +61,4 @@ def test_candidate_comparison_keeps_latency_scopes_separate():
     from fine_defect_ad.portfolio_render import candidate_comparison_svg
     svg = candidate_comparison_svg()
     assert 'not directly comparable' in svg
-    assert '1.1414 s' in svg and '2.1040 s' in svg
+    assert 'Same TESTpub 114' in svg
