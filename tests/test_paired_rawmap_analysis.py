@@ -20,7 +20,11 @@ def test_manifest_rejects_unhashed_or_wrong_shape(tmp_path):
 
 def test_outputs_are_hash_bound_and_path_free(tmp_path):
     result={'record':{'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':'r','privacy':'no paths','dataset_relative_quantile_strata':{'area_fraction':{'strata':[{'name':'low','count':1,'mean_paired_pixel_auroc_delta':0.1},{'name':'middle','count':1,'mean_paired_pixel_auroc_delta':0.0},{'name':'high','count':1,'mean_paired_pixel_auroc_delta':-0.1}]}}},'rows':[{'index':0,'id_sha256':'a'*64,'label':'bad'}],'representatives':[]}
-    paths=_outputs(tmp_path,'r',result)
+
+    class P: roots={'artifact':str(tmp_path)}
+    def admit(**kw): return P()
+    def writer(path,data,**kw): path.write_bytes(data); return {'status':'READY'}
+    paths=_outputs(tmp_path,'r',result,admit=admit,writer=writer)
     assert all(p.is_file() for p in paths.values())
     assert _hash(paths['json'].read_bytes()) in paths['json'].name
     assert str(tmp_path) not in paths['json'].read_text() and str(tmp_path) not in paths['csv'].read_text()

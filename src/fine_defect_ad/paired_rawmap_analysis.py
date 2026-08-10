@@ -7,7 +7,8 @@ from __future__ import annotations
 import argparse, csv, json
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable
+from .storage import Allocation, READY, atomic_write, preflight
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -19,6 +20,29 @@ def _hash(b: bytes)->str: return sha256(b).hexdigest()
 def _read(p: Path)->dict[str,Any]:
     try: return json.loads(p.read_text())
     except Exception as e: raise ValueError('invalid manifest') from e
+
+
+E2_LEGACY_MANIFEST_SHA256="62901bcbadcfdce167b8d646e22e2f993b120eb6a20378f84a70afa822e1e03c"
+def _canonical_artifact(path:Path, root:Path, *, run_id:str|None=None)->tuple[dict[str,Any],str]:
+    if path.resolve().parent!=root.resolve(): raise ValueError('artifact outside root')
+    raw=path.read_bytes(); d=_read(path); digest=_hash(raw)
+    if raw!=_canon(d) or (run_id is not None and d.get('run_id')!=run_id): raise ValueError('noncanonical or wrong-run artifact')
+    if digest not in path.name: raise ValueError('artifact filename hash mismatch')
+    return d,digest
+
+def _bindings(root:Path,e2_path:Path,su_path:Path,run_id:str)->dict[str,Any]:
+    # E2 pre-dates hash-named filenames: admit this one canonical, frozen record only.
+    eraw=e2_path.read_bytes(); e2=_read(e2_path)
+    if _hash(eraw)!=E2_LEGACY_MANIFEST_SHA256 or eraw!=_canon(e2) or e2.get('status')!='SPLIT_E2_TEST_PUBLIC_RAW_MAPS' or e2.get('decision_id')!='DEC-SPLIT-003' or not isinstance(e2.get('freeze_sha256'),str) or len(e2['freeze_sha256'])!=64: raise ValueError('unadmitted E2 legacy evidence')
+    su,su_sha=_canonical_artifact(su_path,root,run_id=run_id)
+    if su.get('status')!='SUPERADD_POSTHOC_DERIVED_RAW_MAPS' or not isinstance(su.get('lineage'),Mapping): raise ValueError('SuperADD derived manifest schema')
+    orig=root/f"superadd-vits-test-public-raw-{run_id}-{su.get('original_manifest_sha256')}.json"; latch=root/f"superadd-vits-test-public-latch-{run_id}-{su.get('latch_sha256')}.json"
+    original,orig_sha=_canonical_artifact(orig,root,run_id=run_id); latched,latch_sha=_canonical_artifact(latch,root,run_id=run_id)
+    lineage=su['lineage']
+    if original.get('status')!='SUPERADD_TEST_PUBLIC_RAW_MAPS' or original.get('lineage')!=lineage or latched.get('status')!='TEST_PUBLIC_INITIAL_ATTEMPT_LATCH': raise ValueError('SuperADD referenced lineage mismatch')
+    for k in ('preflight_sha256','recipe_sha256','weight_sha256','train_bank_sha256','validation_parity_sha256','evaluator_sha256','runner_source_sha256','code_git_commit'):
+        if k in lineage and latched.get(k)!=lineage.get(k): raise ValueError('SuperADD latch binding mismatch')
+    return {'e2_legacy_manifest_sha256':E2_LEGACY_MANIFEST_SHA256,'e2_freeze_sha256':e2['freeze_sha256'],'e2_decision_id':e2['decision_id'],'superadd_derived_manifest_sha256':su_sha,'superadd_original_manifest_sha256':orig_sha,'superadd_latch_sha256':latch_sha,'superadd_lineage':dict(lineage)}
 
 def tie_auroc(scores: np.ndarray, positive: np.ndarray)->float|None:
     """Exact tie-aware Mann--Whitney AUROC; None where an image has one class."""
@@ -76,6 +100,7 @@ def _mask(path:Path)->np.ndarray:
 
 def analyze(*,artifact_root:Path,e2_manifest:Path,superadd_manifest:Path,dataset_root:Path,run_id:str)->dict[str,Any]:
     root=Path(artifact_root).resolve()
+    bindings=_bindings(root,Path(e2_manifest),Path(superadd_manifest),run_id)
     e2=_manifest_rows(root,Path(e2_manifest),'SPLIT_E2_TEST_PUBLIC_RAW_MAPS','g002-e2-split-test-public-raw-')
     su=_manifest_rows(root,Path(superadd_manifest),'SUPERADD_POSTHOC_DERIVED_RAW_MAPS',f'superadd-vits-posthoc-raw-{run_id}-')
     from .g002_testpub_runtime import test_public_entries
@@ -103,10 +128,10 @@ def analyze(*,artifact_root:Path,e2_manifest:Path,superadd_manifest:Path,dataset
         strata[key]={'cutpoints':cuts,'strata':[{'name':n,'count':len(g),'mean_paired_pixel_auroc_delta':None if not g else float(np.mean(g))} for n,g in zip(('low','middle','high'),groups)]}
     ranked=sorted(bad,key=lambda r:r['pixel_auroc_delta']); reps=[]
     if ranked: reps=[('e2_stronger',ranked[0]),('similar',min(ranked,key=lambda r:abs(r['pixel_auroc_delta']))),('superadd_stronger',ranked[-1])]
-    record={'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':run_id,'protocol':'FROZEN_RAW_MAPS_AND_GT_MASKS_ONLY_NO_INFERENCE_RETRAINING_OR_THRESHOLD_TUNING','privacy':'anonymized_ids_and_hashes_only_no_source_images_or_paths','shape':list(SHAPE),'counts':{'total':N,'good':24,'bad':90},'inputs':{'e2_manifest_sha256':_hash(Path(e2_manifest).read_bytes()),'superadd_manifest_sha256':_hash(Path(superadd_manifest).read_bytes())},'descriptive_only':True,'scale_robust_measure':'per-image exact tie-aware pixel AUROC and within-model image-score ranks','spearman_pixel_auroc_delta_vs_mask_features':corr,'dataset_relative_quantile_strata':strata,'compactness_definition':'4-connected digital perimeter; compactness=4*pi*area/perimeter^2','representatives':[{'category':c,'id_sha256':r['id_sha256'],'pixel_auroc_delta':r['pixel_auroc_delta']} for c,r in reps],'interpretation':'Measured associations only; architecture causality is not established. Quantile strata and paired deltas are descriptive, not selection or tuning.'}
+    record={'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':run_id,'protocol':'FROZEN_RAW_MAPS_AND_GT_MASKS_ONLY_NO_INFERENCE_RETRAINING_OR_THRESHOLD_TUNING','privacy':'anonymized_ids_and_hashes_only_no_source_images_or_paths','shape':list(SHAPE),'counts':{'total':N,'good':24,'bad':90},'bindings':bindings,'descriptive_only':True,'scale_robust_measure':'per-image exact tie-aware pixel AUROC and within-model image-score ranks','spearman_pixel_auroc_delta_vs_mask_features':corr,'dataset_relative_quantile_strata':strata,'compactness_definition':'4-connected digital perimeter; compactness=4*pi*area/perimeter^2','representatives':[{'category':c,'id_sha256':r['id_sha256'],'pixel_auroc_delta':r['pixel_auroc_delta']} for c,r in reps],'interpretation':'Measured associations only; architecture causality is not established. Quantile strata and paired deltas are descriptive, not selection or tuning.'}
     return {'record':record,'rows':rows,'representatives':reps}
 
-def _outputs(root:Path,run_id:str,result:dict[str,Any])->dict[str,Path]:
+def _outputs(root:Path,run_id:str,result:dict[str,Any],*,admit:Callable[...,Any]=preflight,writer:Callable[...,Any]=atomic_write)->dict[str,Path]:
     rec=result['record']; rows=result['rows']; js=_canon(rec); digest=_hash(js); base=f'paired-rawmap-analysis-{run_id}-{digest}'
     csv_rows=[{k:('' if v is None else v) for k,v in r.items()} for r in rows]; import io
     out=io.StringIO(); w=csv.DictWriter(out,fieldnames=list(csv_rows[0]));w.writeheader();w.writerows(csv_rows); cb=out.getvalue().encode()
@@ -120,9 +145,15 @@ def _outputs(root:Path,run_id:str,result:dict[str,Any])->dict[str,Path]:
     png=__import__('io').BytesIO();panel.save(png,format='PNG'); pb=png.getvalue()
     st=rec['dataset_relative_quantile_strata']['area_fraction']['strata']; vals=[x['mean_paired_pixel_auroc_delta'] or 0 for x in st]; bars=''.join(f'<rect x="{170+i*190}" y="{150-max(0,v)*300:.1f}" width="70" height="{abs(v)*300:.1f}" fill="{'#2878b5' if v>=0 else '#c94c4c'}"/><text x="{160+i*190}" y="185" font-size="13">{st[i]['name']} n={st[i]['count']}</text><text x="{170+i*190}" y="205" font-size="12">{v:+.3f}</text>' for i,v in enumerate(vals)); svg=(f'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240"><rect width="100%" height="100%" fill="white"/><text x="25" y="34" font-size="21">Paired pixel-AUROC delta by GT area fraction (descriptive)</text><text x="25" y="58" font-size="13">SuperADD − E2-Split; same TESTpub114, frozen 528×2112 raw maps. 4-connected mask strata.</text><line x1="120" y1="150" x2="820" y2="150" stroke="#222"/>{bars}<text x="25" y="225" font-size="12">No inference, threshold tuning, source images, or causal/model-selection claim.</text></svg>').encode()
     paths={'json':root/f'{base}.json','csv':root/f'paired-rawmap-analysis-rows-{run_id}-{_hash(cb)}.csv','svg':root/f'paired-rawmap-analysis-figure-{run_id}-{_hash(svg)}.svg','png':root/f'paired-rawmap-analysis-panel-{run_id}-{_hash(pb)}.png'}
+    blobs=tuple((p,b) for p,b in zip(paths.values(),(js,cb,svg,pb)) if not p.exists())
+    if blobs:
+        total=sum(len(b) for _,b in blobs); pending=max(len(b) for _,b in blobs); source=f'exact paired evidence bytes={total}'
+        proof=admit(run_id=run_id,allocations=[Allocation('artifact',total,'persistent',source,'paired-rawmap-analysis'),Allocation('artifact',pending,'transient',source,'paired-rawmap-analysis-incoming')],reserve_bytes=pending,reserve_evidence={'max_pending_atomic_write_bytes':pending,'measured_high_water_bytes':0,'runtime_or_source_citation':source})
+        if Path(proof.roots['artifact']).resolve()!=root: raise ValueError('proof root changed')
+        for p,b in blobs:
+            if writer(p,b,proof=proof,run_id=run_id,overwrite=False).get('status')!=READY or p.read_bytes()!=b: raise ValueError('analysis atomic write failed')
     for p,b in zip(paths.values(),(js,cb,svg,pb)):
-        if p.exists() and p.read_bytes()!=b: raise ValueError('immutable analysis artifact collision')
-        if not p.exists(): p.write_bytes(b)
+        if p.read_bytes()!=b: raise ValueError('immutable analysis artifact collision')
     return paths
 
 def main(argv:list[str]|None=None)->int:
