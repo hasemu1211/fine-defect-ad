@@ -56,3 +56,9 @@ def test_preview_metadata_binds_each_png(tmp_path):
     preview=tmp_path/'preview'; render(artifact_root=artifacts,dataset_root=data,run_id=run,public_dir=tmp_path/'public',preview_dir=preview)
     for row in json.loads((preview/'metadata.json').read_text())['previews']:
         assert row['preview_sha256']==sha256((preview/row['file']).read_bytes()).hexdigest()
+
+def test_candidate_comparison_keeps_latency_scopes_separate():
+    from fine_defect_ad.portfolio_render import candidate_comparison_svg
+    svg = candidate_comparison_svg()
+    assert 'not directly comparable' in svg
+    assert '1.1414 s' in svg and '2.1040 s' in svg

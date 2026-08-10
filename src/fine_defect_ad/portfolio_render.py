@@ -180,3 +180,8 @@ def main() -> None:
     print(json.dumps(render(artifact_root=args.artifact_root,dataset_root=args.dataset_root,run_id=args.run_id,public_dir=args.public_dir,preview_dir=args.preview_dir),indent=2))
 
 if __name__=='__main__': main()
+
+
+def candidate_comparison_svg() -> str:
+    """Raw-map-only SuperADD comparison; latency scopes are intentionally separate."""
+    return _svg(1120, 180, '<text x="48" y="48" class="t">SuperADD evidence candidate</text><text x="48" y="78" class="s">Image AU-ROC 0.83935185 · AU-PRO@0.05 0.43140701</text><text x="48" y="108" class="s">SuperADD 114-image inference: mean 1.1414 s, p50 1.0242 s; E2-Split representative single image: 2.1040 s</text><text x="48" y="140" class="n">Latency scopes are not directly comparable. Serving NO-GO: export, feature/final-map parity, and bank serialization proof absent.</text>')

@@ -6,13 +6,13 @@
 
 ## 문제와 비교 경계
 
-정상 이미지로만 bank/보정 경계를 고정하고, TESTpub은 한 번의 raw-map 평가에만 사용했습니다. 아래 수치는 재학습·TEST tuning·threshold 선택 없이 기록된 연속 점수의 Image AU-ROC/AU-PRO@0.05입니다.
+정상 이미지로만 bank/보정 경계를 고정하고, TESTpub은 한 번의 raw-map 평가에만 사용했습니다. 아래 수치는 재학습·TEST tuning·threshold 선택 없이 기록된 연속 점수의 Image AU-ROC/AU-PRO@0.05입니다. 지연은 서로 다른 evidence scope(단일 E2-Split 대표 이미지와 SuperADD 114장 inference 분포)라 직접 비교하거나 속도 우위로 해석하지 않습니다.
 
 | 경로 | Image AU-ROC | AU-PRO@0.05 | 지연 | 해석 |
 | --- | ---: | ---: | ---: | --- |
 | 256×256 기준선 | 0.595370 | 0.020582 | — | 동일 EfficientAD-S checkpoint의 기준 |
-| E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 2.1040 s/image | 고해상도 분할 backend 후보 |
-| SuperADD ViT-S direct/posthoc | **0.83935185** | **0.43140701** | **mean 1.1414 s, p50 1.0242 s/image** | evidence-only challenger |
+| E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 대표 단일 고해상도 이미지 2.1040 s | 고해상도 분할 backend 후보 |
+| SuperADD ViT-S direct/posthoc | **0.83935185** | **0.43140701** | **114장 inference: mean 1.1414 s, p50 1.0242 s/image** | evidence-only challenger |
 
 ## 경로 진화와 선택
 
@@ -20,7 +20,7 @@
 2. **E2-Split** — 원본을 256×256 타일로 분할하고 국소/전역 raw anomaly map을 결합했습니다.
 3. **TensorRT/Triton 후보** — 같은 E2-Split 경로에서 2.1040 s/image와 수치 보존을 확인했지만, 후보 backend 평가일 뿐 운영 승격이 아닙니다.
 4. **SuperADD challenger** — pinned ViT-S, one-pass normal bank, FP32 선택과 posthoc 528×2112 evaluation geometry로 기록했습니다. 위의 metric/latency evidence 때문에 direct candidate로 선택합니다.
-5. **Serving 결정: NO-GO** — direct 경로가 이미 E2-Split TRT보다 빠릅니다. DINO export/Triton feature parity와 bank serialization이 검증되지 않았으므로, 성능 하향 위험을 감수해 serving 경로를 추가하지 않습니다.
+5. **Serving 결정: NO-GO** — DINO export, feature/final-map parity, bank serialization proof가 검증되지 않았습니다. 이 proof 없이 Triton serving 경로를 추가하지 않습니다.
 
 ![후보 architecture / data flow](docs/assets/system-architecture.svg)
 
