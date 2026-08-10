@@ -19,8 +19,12 @@ def test_manifest_rejects_unhashed_or_wrong_shape(tmp_path):
     with pytest.raises(ValueError):_manifest_rows(tmp_path,p,'SPLIT_E2_TEST_PUBLIC_RAW_MAPS','x-')
 
 def test_outputs_are_hash_bound_and_path_free(tmp_path):
-    result={'record':{'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':'r','privacy':'no paths'},'rows':[{'index':0,'id_sha256':'a'*64,'label':'bad'}],'representatives':[]}
+    result={'record':{'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':'r','privacy':'no paths','dataset_relative_quantile_strata':{'area_fraction':{'strata':[{'name':'low','count':1,'mean_paired_pixel_auroc_delta':0.1},{'name':'middle','count':1,'mean_paired_pixel_auroc_delta':0.0},{'name':'high','count':1,'mean_paired_pixel_auroc_delta':-0.1}]}}},'rows':[{'index':0,'id_sha256':'a'*64,'label':'bad'}],'representatives':[]}
     paths=_outputs(tmp_path,'r',result)
     assert all(p.is_file() for p in paths.values())
     assert _hash(paths['json'].read_bytes()) in paths['json'].name
     assert str(tmp_path) not in paths['json'].read_text() and str(tmp_path) not in paths['csv'].read_text()
+
+def test_compactness_is_4_connected_perimeter_metric():
+    m=np.ones((2,2),bool)
+    assert mask_features(m)['compactness']==pytest.approx(np.pi/4) # area 4, exposed perimeter 8

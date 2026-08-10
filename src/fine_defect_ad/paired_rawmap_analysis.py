@@ -41,13 +41,18 @@ def _spearman(x:list[float],y:list[float])->float|None:
     if np.std(a)==0 or np.std(b)==0:return None
     return float(np.corrcoef(a,b)[0,1])
 
+def _perimeter(mask:np.ndarray)->int:
+    """4-connected digital perimeter: exposed north/south/east/west pixel edges."""
+    m=np.asarray(mask,bool); return int(4*m.sum()-2*(np.logical_and(m[:,1:],m[:,:-1]).sum()+np.logical_and(m[1:,:],m[:-1,:]).sum()))
+
 def mask_features(mask:np.ndarray)->dict[str,float|None]:
     y,x=np.nonzero(mask); h,w=mask.shape; n=len(y)
     if not n:return {'area_fraction':0.,'border_distance_normalized':None,'elongation':None,'compactness':None}
     border=np.minimum.reduce([y,h-1-y,x,w-1-x]).mean()/float(np.hypot(h,w))
-    if n<3:return {'area_fraction':n/(h*w),'border_distance_normalized':float(border),'elongation':None,'compactness':None}
+    perimeter=_perimeter(mask); compact=float(4*np.pi*n/(perimeter*perimeter)) if perimeter else None
+    if n<3:return {'area_fraction':n/(h*w),'border_distance_normalized':float(border),'elongation':None,'compactness':compact}
     eig=np.linalg.eigvalsh(np.cov(np.stack((y,x)))); lo,hi=float(eig[0]),float(eig[1])
-    return {'area_fraction':n/(h*w),'border_distance_normalized':float(border),'elongation':None if lo<=0 else float(np.sqrt(hi/lo)),'compactness':float(n/(np.pi*(hi+1)))}
+    return {'area_fraction':n/(h*w),'border_distance_normalized':float(border),'elongation':None if lo<=0 else float(np.sqrt(hi/lo)),'compactness':compact}
 
 def _raw(root:Path,prefix:str,index:int,digest:str)->np.ndarray:
     p=root/f'{prefix}{index:03d}-{digest}.bin'; raw=p.read_bytes()
@@ -86,10 +91,19 @@ def analyze(*,artifact_root:Path,e2_manifest:Path,superadd_manifest:Path,dataset
     er=_rank(np.array([r['e2_map_max'] for r in rows]))/N; sr=_rank(np.array([r['superadd_map_max'] for r in rows]))/N
     for r,x,y in zip(rows,er,sr): r['score_rank_delta']=float(y-x); r.pop('e2_map_max');r.pop('superadd_map_max')
     bad=[r for r in rows if r['pixel_auroc_delta'] is not None]
-    corr={k:_spearman([r[k] for r in bad if r[k] is not None],[r['pixel_auroc_delta'] for r in bad if r[k] is not None]) for k in ('area_fraction','border_distance_normalized','elongation','compactness')}
+    features=('area_fraction','border_distance_normalized','elongation','compactness')
+    corr={k:_spearman([r[k] for r in bad if r[k] is not None],[r['pixel_auroc_delta'] for r in bad if r[k] is not None]) for k in features}
+    strata={}
+    for key in features:
+        values=np.array([r[key] for r in bad if r[key] is not None],dtype=float)
+        if len(values)<3: strata[key]={'cutpoints':[],'strata':[]}; continue
+        cuts=np.quantile(values,[1/3,2/3]).tolist(); groups=[[],[],[]]
+        for r in bad:
+            if r[key] is not None: groups[0 if r[key]<=cuts[0] else 1 if r[key]<=cuts[1] else 2].append(r['pixel_auroc_delta'])
+        strata[key]={'cutpoints':cuts,'strata':[{'name':n,'count':len(g),'mean_paired_pixel_auroc_delta':None if not g else float(np.mean(g))} for n,g in zip(('low','middle','high'),groups)]}
     ranked=sorted(bad,key=lambda r:r['pixel_auroc_delta']); reps=[]
     if ranked: reps=[('e2_stronger',ranked[0]),('similar',min(ranked,key=lambda r:abs(r['pixel_auroc_delta']))),('superadd_stronger',ranked[-1])]
-    record={'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':run_id,'protocol':'FROZEN_RAW_MAPS_AND_GT_MASKS_ONLY_NO_INFERENCE_RETRAINING_OR_THRESHOLD_TUNING','privacy':'anonymized_ids_and_hashes_only_no_source_images_or_paths','shape':list(SHAPE),'counts':{'total':N,'good':24,'bad':90},'inputs':{'e2_manifest_sha256':_hash(Path(e2_manifest).read_bytes()),'superadd_manifest_sha256':_hash(Path(superadd_manifest).read_bytes())},'descriptive_only':True,'scale_robust_measure':'per-image exact tie-aware pixel AUROC and within-model image-score ranks','spearman_pixel_auroc_delta_vs_mask_features':corr,'representatives':[{'category':c,'id_sha256':r['id_sha256'],'pixel_auroc_delta':r['pixel_auroc_delta']} for c,r in reps],'interpretation':'Measured associations only; architecture causality is not established. Quantile strata and paired deltas are descriptive, not selection or tuning.'}
+    record={'status':'PAIRED_RAWMAP_DESCRIPTIVE_ANALYSIS','run_id':run_id,'protocol':'FROZEN_RAW_MAPS_AND_GT_MASKS_ONLY_NO_INFERENCE_RETRAINING_OR_THRESHOLD_TUNING','privacy':'anonymized_ids_and_hashes_only_no_source_images_or_paths','shape':list(SHAPE),'counts':{'total':N,'good':24,'bad':90},'inputs':{'e2_manifest_sha256':_hash(Path(e2_manifest).read_bytes()),'superadd_manifest_sha256':_hash(Path(superadd_manifest).read_bytes())},'descriptive_only':True,'scale_robust_measure':'per-image exact tie-aware pixel AUROC and within-model image-score ranks','spearman_pixel_auroc_delta_vs_mask_features':corr,'dataset_relative_quantile_strata':strata,'compactness_definition':'4-connected digital perimeter; compactness=4*pi*area/perimeter^2','representatives':[{'category':c,'id_sha256':r['id_sha256'],'pixel_auroc_delta':r['pixel_auroc_delta']} for c,r in reps],'interpretation':'Measured associations only; architecture causality is not established. Quantile strata and paired deltas are descriptive, not selection or tuning.'}
     return {'record':record,'rows':rows,'representatives':reps}
 
 def _outputs(root:Path,run_id:str,result:dict[str,Any])->dict[str,Path]:
@@ -104,7 +118,7 @@ def _outputs(root:Path,run_id:str,result:dict[str,Any])->dict[str,Path]:
             a=_raw(root,prefix,row['index'],digest); lo,hi=float(a.min()),float(a.max()); z=((a-lo)/(hi-lo+1e-12)*255).astype('uint8')
             im=Image.fromarray(z).resize((340,85),Image.Resampling.BILINEAR).convert('RGB'); panel.paste(im,(x,y+35)); d.text((x,y+122),label,fill=(0,0,0))
     png=__import__('io').BytesIO();panel.save(png,format='PNG'); pb=png.getvalue()
-    svg=(f'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="220"><rect width="100%" height="100%" fill="white"/><text x="30" y="45" font-size="24">Frozen paired raw-map analysis (descriptive)</text><text x="30" y="90" font-size="16">{N} same TESTpub entries · 528×2112 · tie-aware per-image pixel AUROC</text><text x="30" y="125" font-size="14">No inference, retraining, threshold tuning, source images, or paths.</text><text x="30" y="165" font-size="14">E2/SuperADD score magnitudes are only compared as within-model ranks.</text></svg>').encode()
+    st=rec['dataset_relative_quantile_strata']['area_fraction']['strata']; vals=[x['mean_paired_pixel_auroc_delta'] or 0 for x in st]; bars=''.join(f'<rect x="{170+i*190}" y="{150-max(0,v)*300:.1f}" width="70" height="{abs(v)*300:.1f}" fill="{'#2878b5' if v>=0 else '#c94c4c'}"/><text x="{160+i*190}" y="185" font-size="13">{st[i]['name']} n={st[i]['count']}</text><text x="{170+i*190}" y="205" font-size="12">{v:+.3f}</text>' for i,v in enumerate(vals)); svg=(f'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240"><rect width="100%" height="100%" fill="white"/><text x="25" y="34" font-size="21">Paired pixel-AUROC delta by GT area fraction (descriptive)</text><text x="25" y="58" font-size="13">SuperADD − E2-Split; same TESTpub114, frozen 528×2112 raw maps. 4-connected mask strata.</text><line x1="120" y1="150" x2="820" y2="150" stroke="#222"/>{bars}<text x="25" y="225" font-size="12">No inference, threshold tuning, source images, or causal/model-selection claim.</text></svg>').encode()
     paths={'json':root/f'{base}.json','csv':root/f'paired-rawmap-analysis-rows-{run_id}-{_hash(cb)}.csv','svg':root/f'paired-rawmap-analysis-figure-{run_id}-{_hash(svg)}.svg','png':root/f'paired-rawmap-analysis-panel-{run_id}-{_hash(pb)}.png'}
     for p,b in zip(paths.values(),(js,cb,svg,pb)):
         if p.exists() and p.read_bytes()!=b: raise ValueError('immutable analysis artifact collision')
