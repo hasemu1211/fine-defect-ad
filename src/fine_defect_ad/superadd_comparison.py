@@ -325,7 +325,20 @@ def _map(model: Any, value: Any, torch: Any, original: tuple[int, int], *, fp16:
             with torch.autocast(device_type="cuda", dtype=torch.float16): output = model(value)
         else: output = model(value)
     candidate = output["anomaly_map"] if isinstance(output, Mapping) else getattr(output, "anomaly_map", output)
-    return F.interpolate(candidate.float(), size=original, mode="bilinear", align_corners=False).squeeze().detach().cpu().numpy()
+    shape = tuple(getattr(candidate, "shape", ()))
+    if len(shape) == 2:
+        candidate = candidate.unsqueeze(0).unsqueeze(0)
+    elif len(shape) == 3:
+        candidate = candidate.unsqueeze(1)
+    elif len(shape) != 4:
+        raise ChallengerBlocked("SuperADD anomaly map must be 2D, [B,H,W], or [B,1,H,W]")
+    if tuple(candidate.shape[:2]) != (1, 1):
+        raise ChallengerBlocked("SuperADD anomaly map requires B=1,C=1")
+    result = F.interpolate(candidate.float(), size=original, mode="bilinear", align_corners=False)[0, 0].detach().cpu().numpy()
+    import numpy as np
+    if result.ndim != 2 or not np.isfinite(result).all():
+        raise ChallengerBlocked("SuperADD anomaly map must be finite 2D")
+    return result
 
 
 def _progress_path(root: Path, args: ComparisonArgs, payload: bytes) -> Path:

@@ -104,3 +104,17 @@ def test_cublas_workspace_config_sets_unset_and_blocks_conflict(monkeypatch):
     assert subject._cublas_workspace_config() == ":4096:8"
     monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")
     with pytest.raises(subject.ChallengerBlocked): subject._cublas_workspace_config()
+
+@pytest.mark.parametrize("shape", [(2, 3), (1, 2, 3), (1, 1, 2, 3)])
+def test_superadd_map_normalizes_admitted_shapes(shape):
+    torch = pytest.importorskip("torch")
+    class Model:
+        def __call__(self, _): return {"anomaly_map": torch.ones(shape)}
+    result = subject._map(Model(), torch.ones((1, 3, 2, 3)), torch, (4, 5))
+    assert result.shape == (4, 5) and np.isfinite(result).all()
+
+def test_superadd_map_rejects_non_singleton_batch_or_channel():
+    torch = pytest.importorskip("torch")
+    class Model:
+        def __call__(self, _): return {"anomaly_map": torch.ones((2, 1, 2, 3))}
+    with pytest.raises(subject.ChallengerBlocked): subject._map(Model(), torch.ones((1, 3, 2, 3)), torch, (4, 5))
