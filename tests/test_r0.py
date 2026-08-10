@@ -36,7 +36,9 @@ class R0Tests(unittest.TestCase):
  def test_der_actual_register_and_schema_contract(self):
   dataset_schema=json.loads(Path('evidence/schemas/dataset-manifest.schema.json').read_text()); self.assertEqual(dataset_schema['properties']['content_hash']['pattern'],'^[0-9a-f]{64}$')
   item={k:'x' for k in DER_REQUIRED};item.update(decision_id='DEC-R0-1',status='proposed',drivers=[],alternatives=[]);validate_der(item)
-  rows=validate_decision_register(Path('evidence/decision-register.yaml')); self.assertEqual({row['decision_id'] for row in rows},{'DEC-STO-001','DEC-RUN-001','DEC-TRN-002'})
+  rows=validate_decision_register(Path('evidence/decision-register.yaml')); ids={row['decision_id'] for row in rows}
+  required={'DEC-ARC-001','DEC-QUA-001','DEC-DAT-001','DEC-DAT-002','DEC-MOD-001','DEC-MOD-002','DEC-TRN-001','DEC-TRN-002','DEC-TRN-003','DEC-TRN-004','DEC-TRN-005','DEC-GEO-001','DEC-GEO-002','DEC-SPLIT-003','DEC-THR-001','DEC-MET-001','DEC-EXP-001','DEC-SRV-001','DEC-SRV-002','DEC-FAL-001','DEC-OBS-001','DEC-ENV-001','DEC-RUN-001','DEC-STO-001'}
+  self.assertEqual(ids,required); self.assertTrue(all(set(row)==DER_REQUIRED for row in rows))
   schema=json.loads(Path('evidence/schemas/decision-evidence-register.schema.json').read_text()); self.assertEqual(schema['type'],'array'); self.assertEqual(schema['items']['type'],'object')
   validate_evidence({'run_id':'x','timestamp':'t','command':'x','status':'INVALIDATED','limitations':['ENOSPC']})
  def test_lock_contention_exception_and_window(self):
@@ -148,3 +150,9 @@ def test_atomic_write_mkstemp_enospc_invalidates_same_run():
    assert atomic_write(roots['artifact']/'immutable.jsonl',b'x',proof=proof,run_id='r')['status']=='INVALIDATED'
   assert (roots['artifact']/'.invalidated-r.json').exists()
   with pytest.raises(Exception): require_proof(proof,run_id='r')
+
+
+def test_der_rejects_extra_field():
+  item={k:'x' for k in DER_REQUIRED};item.update(decision_id='DEC-R0-1',status='proposed',drivers=[],alternatives=[],extra='x')
+  import pytest
+  with pytest.raises(ValueError): validate_der(item)

@@ -2,7 +2,7 @@
 
 **제조 sheet-metal 이상 탐지의 두 독립 파이프라인—EfficientAD E2-Split+TensorRT/Triton과 SuperADD/DINOv3—를 동일 TESTpub 114, 익명 ID, 528×2112 raw-map geometry, 공식 evaluator, SHA-256 결속으로 비교하는 재현 포트폴리오입니다.** 운영 배포·SOTA·최종 모델 선택·일반화 우열·임계값 기반 판정은 주장하지 않습니다.
 
-![독립 파이프라인 비교: raw-map-only evidence](docs/assets/candidate-comparison.svg)
+![독립 파이프라인 비교: raw-map 집계와 익명 raw-map·GT-mask 패널](docs/assets/candidate-comparison.svg)
 
 ## 독립 파이프라인과 비교 경계
 
@@ -26,7 +26,7 @@
 
 ## 공개 시각화 경계
 
-시각화는 원시 anomaly-map의 집계 수치와 익명화된 raw-map-only 흐름만 사용합니다. 원본 제조 이미지, 로컬 경로, 식별 가능한 preview는 공개 자산에 포함하지 않습니다.
+시각화는 원시 anomaly-map의 집계 수치와 익명 raw-map·GT-mask 패널만 사용합니다. 원본 제조 이미지, 로컬 경로, 식별 가능한 preview는 공개 자산에 포함하지 않습니다.
 
 ## 빠른 실행
 
@@ -52,14 +52,18 @@ evidence/            공개 가능한 평가 기준선·비교·입력 해시
 
 ## 상세 문서
 
+- [아키텍처와 비교 경계](docs/ARCHITECTURE.md)
+- [평가 프로토콜과 지표 범위](docs/EVALUATION.md)
+- [재현성 범위와 검증 명령](docs/REPRODUCIBILITY.md)
+- [명시적 한계](docs/LIMITATIONS.md)
 - [배포 후보와 backend A/B 평가](docs/DEPLOYMENT_EVALUATION.md)
 - [고해상도 추론 평가와 한계](docs/SHEET_METAL_EVALUATION.md)
 - [기준선 평가](evidence/g002/baseline_evaluation.json)
 - [고해상도 경로 비교](evidence/g002/evaluation_comparison.json)
 - [라이선스와 출처](LICENSES.md)
 
-### Frozen paired raw-map analysis
+### 동결된 paired raw-map 분석
 
-A descriptive, hash-replayed paired analysis evaluates the two independent pipelines on the same TESTpub114 identities and 528×2112 maps using threshold-independent tie-aware pixel ranking and anonymized raw-map evidence. It does not select a model or assert causal/general performance differences. [Method and limitations](docs/PAIRED_RAWMAP_ANALYSIS.md)
+동일 TESTpub114 ID와 528×2112 맵을 기준으로 threshold-independent tie-aware pixel ranking과 익명 raw-map·GT-mask 패널을 재생하는 기술적 분석입니다. 모델을 선택하거나 모델 구조가 성능 차이의 원인이라고 주장하지 않습니다. [방법과 한계](docs/PAIRED_RAWMAP_ANALYSIS.md)
 
-![Frozen paired raw-map analysis](docs/assets/paired-rawmap-analysis.svg)
+![동결된 paired raw-map 분석](docs/assets/paired-rawmap-analysis.svg)

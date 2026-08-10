@@ -1,5 +1,513 @@
 [
-  {"decision_id":"DEC-STO-001","scope":"storage","decision":"Mandatory NTFS data/artifact roots and ext4 runtime roots","status":"accepted","drivers":["integrity"],"alternatives":["ext4-fallback"],"evidence_type":"preflight","primary_source":"measured-r0-smoke","reference_locator":"triton-r0-smoke storage plan","measurement_artifact":"evidence/triton-r0-smoke.json","derivation":"source-backed-per-filesystem-budget","limitations":"bounded already-pulled smoke only; not a pull admission","reviewed_at":"2026-08-04","artifact_or_model_version":"r0"},
-  {"decision_id":"DEC-RUN-001","scope":"runtime","decision":"native fcntl GPU lease","status":"accepted","drivers":["benchmark-integrity"],"alternatives":["none"],"evidence_type":"measured-smoke","primary_source":"measured-r0-smoke","reference_locator":"triton-r0-smoke lease events","measurement_artifact":"evidence/triton-r0-smoke.json","derivation":"nonblocking-kernel-lock","limitations":"local host only","reviewed_at":"2026-08-04","artifact_or_model_version":"r0"},
-  {"decision_id":"DEC-TRN-002","scope":"training","decision":"G002 1,000-step pilot is systems-only; retain the fixed 70,000-step EfficientAD schedule; prohibit plateau early stopping and best-validation-loss selection; allow hard integrity stops only; never use TEST or OOD data","status":"accepted","drivers":["no-test-leakage","upstream-fixed-schedule","resource-reproducibility"],"alternatives":["loss-plateau early stopping","best validation-loss checkpoint","Hyperband/ASHA hyperparameter search"],"evidence_type":"primary-source-protocol","primary_source":"EfficientAD WACV 2024; anomalib EfficientAd source; Lightning EarlyStopping; Hyperband; ASHA","reference_locator":"evidence/g002-training-decision-sources.md#primary-sources","measurement_artifact":"evidence/g002-training-decision-sources.md","derivation":"the 1,000-step pilot measures runtime stability, resource use, ETA inputs, and checkpoint cadence only; any future convergence/patience rule needs literature plus a longer train-only/normal-validation curve","limitations":"the pilot cannot establish convergence, min_delta, or patience; normal validation supports only normal stability/calibration checks; TESTpub, TESTpriv, TESTpriv,mix, OOD identities, labels, masks, scores, and geometry are forbidden from training, checkpoint, stop, and serving selection","reviewed_at":"2026-08-04","artifact_or_model_version":"EfficientAD-S/anomalib-2.6.0"}
+  {
+    "decision_id": "DEC-STO-001",
+    "scope": "storage",
+    "decision": "Mandatory NTFS data/artifact roots and ext4 runtime roots",
+    "status": "accepted",
+    "drivers": [
+      "integrity"
+    ],
+    "alternatives": [
+      "ext4-fallback"
+    ],
+    "evidence_type": "preflight",
+    "primary_source": "measured-r0-smoke",
+    "reference_locator": "triton-r0-smoke storage plan",
+    "measurement_artifact": "evidence/triton-r0-smoke.json",
+    "derivation": "source-backed-per-filesystem-budget",
+    "limitations": "bounded already-pulled smoke only; not a pull admission",
+    "reviewed_at": "2026-08-04",
+    "artifact_or_model_version": "r0"
+  },
+  {
+    "decision_id": "DEC-RUN-001",
+    "scope": "runtime",
+    "decision": "native fcntl GPU lease",
+    "status": "accepted",
+    "drivers": [
+      "benchmark-integrity"
+    ],
+    "alternatives": [
+      "none"
+    ],
+    "evidence_type": "measured-smoke",
+    "primary_source": "measured-r0-smoke",
+    "reference_locator": "triton-r0-smoke lease events",
+    "measurement_artifact": "evidence/triton-r0-smoke.json",
+    "derivation": "nonblocking-kernel-lock",
+    "limitations": "local host only",
+    "reviewed_at": "2026-08-04",
+    "artifact_or_model_version": "r0"
+  },
+  {
+    "decision_id": "DEC-TRN-002",
+    "scope": "training",
+    "decision": "G002 1,000-step pilot is systems-only; retain the fixed 70,000-step EfficientAD schedule; prohibit plateau early stopping and best-validation-loss selection; allow hard integrity stops only; never use TEST or OOD data",
+    "status": "accepted",
+    "drivers": [
+      "no-test-leakage",
+      "upstream-fixed-schedule",
+      "resource-reproducibility"
+    ],
+    "alternatives": [
+      "loss-plateau early stopping",
+      "best validation-loss checkpoint",
+      "Hyperband/ASHA hyperparameter search"
+    ],
+    "evidence_type": "primary-source-protocol",
+    "primary_source": "EfficientAD WACV 2024; anomalib EfficientAd source; Lightning EarlyStopping; Hyperband; ASHA",
+    "reference_locator": "evidence/g002-training-decision-sources.md#primary-sources",
+    "measurement_artifact": "evidence/g002-training-decision-sources.md",
+    "derivation": "the 1,000-step pilot measures runtime stability, resource use, ETA inputs, and checkpoint cadence only; any future convergence/patience rule needs literature plus a longer train-only/normal-validation curve",
+    "limitations": "the pilot cannot establish convergence, min_delta, or patience; normal validation supports only normal stability/calibration checks; TESTpub, TESTpriv, TESTpriv,mix, OOD identities, labels, masks, scores, and geometry are forbidden from training, checkpoint, stop, and serving selection",
+    "reviewed_at": "2026-08-04",
+    "artifact_or_model_version": "EfficientAD-S/anomalib-2.6.0"
+  },
+  {
+    "decision_id": "DEC-ARC-001",
+    "scope": "architecture",
+    "decision": "Two independently implemented pipelines are compared only through a common hash-bound raw-map/evaluator boundary.",
+    "status": "accepted",
+    "drivers": [
+      "comparison integrity",
+      "separation of implementation scope"
+    ],
+    "alternatives": [
+      "single shared model implementation"
+    ],
+    "evidence_type": "architecture record",
+    "primary_source": "README.md#독립-파이프라인과-비교-경계",
+    "reference_locator": "README.md#독립-파이프라인과-비교-경계",
+    "measurement_artifact": "README.md",
+    "derivation": "Public claims are limited to the fixed TESTpub comparison and do not select an operational winner.",
+    "limitations": "The topology is a portfolio evidence boundary, not a production reference architecture.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "public portfolio topology"
+  },
+  {
+    "decision_id": "DEC-QUA-001",
+    "scope": "public quality",
+    "decision": "Publish only anonymized raw-map-derived visualizations and aggregate evidence; exclude source manufacturing images, local paths, and identifiable previews.",
+    "status": "accepted",
+    "drivers": [
+      "privacy",
+      "releasability"
+    ],
+    "alternatives": [
+      "publish source-image examples"
+    ],
+    "evidence_type": "public-safety policy",
+    "primary_source": "README.md#공개-시각화-경계",
+    "reference_locator": "README.md#공개-시각화-경계",
+    "measurement_artifact": "README.md",
+    "derivation": "The public renderer and documentation are limited to raw-map aggregation and anonymized raw-map+GT-mask (no source images) assets.",
+    "limitations": "Anonymization does not establish that arbitrary downstream joins are impossible.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "public portfolio assets"
+  },
+  {
+    "decision_id": "DEC-DAT-001",
+    "scope": "dataset identity",
+    "decision": "Bind experiments to the sheet-metal manifest, seed provenance, and input hashes rather than redistributing dataset content.",
+    "status": "accepted",
+    "drivers": [
+      "reproducibility",
+      "license boundary"
+    ],
+    "alternatives": [
+      "copy dataset into repository"
+    ],
+    "evidence_type": "manifest provenance",
+    "primary_source": "evidence/r1-sheet-metal-manifest.json",
+    "reference_locator": "evidence/r1-sheet-metal-manifest.json",
+    "measurement_artifact": "evidence/r1-sheet-metal-manifest.json",
+    "derivation": "The public record contains identities and hashes, not dataset bodies.",
+    "limitations": "A user still needs separately authorized data access to reproduce a run.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "R1 manifest"
+  },
+  {
+    "decision_id": "DEC-DAT-002",
+    "scope": "dataset access",
+    "decision": "Treat MVTec AD 2 data and evaluator archives as externally licensed, ephemeral inputs; record provenance and caveats without bundling them.",
+    "status": "accepted",
+    "drivers": [
+      "license compliance",
+      "public release safety"
+    ],
+    "alternatives": [
+      "redistribute downloaded archives"
+    ],
+    "evidence_type": "source provenance",
+    "primary_source": "evidence/mvtec-metric-provenance.json",
+    "reference_locator": "evidence/mvtec-metric-provenance.json",
+    "measurement_artifact": "evidence/mvtec-metric-provenance.json",
+    "derivation": "Archive inspection is recorded without publishing the archives or data body.",
+    "limitations": "Recorded archive hashes do not grant reuse rights or prove AD 2 server equivalence.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "MVTec provenance"
+  },
+  {
+    "decision_id": "DEC-MOD-001",
+    "scope": "model",
+    "decision": "Use EfficientAD-S as the primary reproducible baseline with its fixed schedule and a separate high-resolution E2-Split inference path.",
+    "status": "accepted",
+    "drivers": [
+      "baseline traceability",
+      "fixed schedule"
+    ],
+    "alternatives": [
+      "uncontrolled architecture search"
+    ],
+    "evidence_type": "protocol/source",
+    "primary_source": "evidence/g002-training-decision-sources.md",
+    "reference_locator": "evidence/g002-training-decision-sources.md",
+    "measurement_artifact": "evidence/g002-training-decision-sources.md",
+    "derivation": "E2-Split is presented as an independent implementation/validation route, not a final deployed model.",
+    "limitations": "Its public results are bounded to the frozen checkpoint and recorded test scope.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "EfficientAD-S/anomalib-2.6.0"
+  },
+  {
+    "decision_id": "DEC-MOD-002",
+    "scope": "model",
+    "decision": "Admit one SuperADD/DINOv3 challenger through a pinned ViT-S fallback after an exact H+ resource/reproduction failure; preserve the variant label.",
+    "status": "accepted",
+    "drivers": [
+      "one-challenger rule",
+      "resource reproducibility",
+      "claim accuracy"
+    ],
+    "alternatives": [
+      "unbounded challenger search",
+      "label fallback as exact H+"
+    ],
+    "evidence_type": "source admission logic",
+    "primary_source": "src/fine_defect_ad/superadd_preflight.py",
+    "reference_locator": "src/fine_defect_ad/superadd_preflight.py",
+    "measurement_artifact": "src/fine_defect_ad/superadd_preflight.py",
+    "derivation": "SuperADD ViT-S/DINOv3 is an independent comparison pipeline.",
+    "limitations": "The hardware-constrained ViT-S variant is not an exact H+ reproduction.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "DINOv3 commit 6876159a11b4df116f30f667f8c9888617df0751"
+  },
+  {
+    "decision_id": "DEC-TRN-001",
+    "scope": "training data",
+    "decision": "Use normal training data and normal validation identities only for training-time identity, stability, and calibration gates; prohibit TEST and OOD selection signals.",
+    "status": "accepted",
+    "drivers": [
+      "no test leakage",
+      "reproducibility"
+    ],
+    "alternatives": [
+      "test-guided selection"
+    ],
+    "evidence_type": "training admission code",
+    "primary_source": "src/fine_defect_ad/g002_eval_runtime.py",
+    "reference_locator": "src/fine_defect_ad/g002_eval_runtime.py",
+    "measurement_artifact": "src/fine_defect_ad/g002_eval_runtime.py",
+    "derivation": "The two pipelines freeze normal-data boundaries before one TESTpub raw-map evaluation.",
+    "limitations": "A normal-only validation set cannot measure anomaly detection generalization.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "G002 protocol"
+  },
+  {
+    "decision_id": "DEC-TRN-003",
+    "scope": "training completion",
+    "decision": "Admit evaluation only from a complete, identity-bound 70,000-step checkpoint with hash-bound sidecar, metrics, and final-attempt evidence.",
+    "status": "accepted",
+    "drivers": [
+      "lineage integrity",
+      "reproducibility"
+    ],
+    "alternatives": [
+      "partial or unbound checkpoint evaluation"
+    ],
+    "evidence_type": "checkpoint admission code",
+    "primary_source": "src/fine_defect_ad/g002_eval_runtime.py#admit_completed_checkpoint",
+    "reference_locator": "src/fine_defect_ad/g002_eval_runtime.py#admit_completed_checkpoint",
+    "measurement_artifact": "src/fine_defect_ad/g002_eval_runtime.py",
+    "derivation": "High-resolution results are tied to a frozen checkpoint and validation identities.",
+    "limitations": "This gate proves artifact lineage, not model quality.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "G002 70,000-step admission"
+  },
+  {
+    "decision_id": "DEC-TRN-004",
+    "scope": "training recovery",
+    "decision": "Use rolling last checkpoints and integrity-checked resume slots; do not claim exact-resume equivalence until it is established.",
+    "status": "accepted",
+    "drivers": [
+      "recoverability",
+      "honest reproducibility"
+    ],
+    "alternatives": [
+      "best-loss resume selection",
+      "unverified exact-resume claim"
+    ],
+    "evidence_type": "training recovery code",
+    "primary_source": "src/fine_defect_ad/g002_training.py#select_resume_slot",
+    "reference_locator": "src/fine_defect_ad/g002_training.py#select_resume_slot",
+    "measurement_artifact": "src/fine_defect_ad/g002_training.py",
+    "derivation": "The repository records evidence and does not promise an operational training service.",
+    "limitations": "Resume exactness is explicitly NOT_ESTABLISHED in the public attempt record.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "G002 training recovery"
+  },
+  {
+    "decision_id": "DEC-TRN-005",
+    "scope": "training selection",
+    "decision": "Reject early-stop, best-validation-loss, and test-driven checkpoint selection for the fixed EfficientAD schedule.",
+    "status": "rejected",
+    "drivers": [
+      "selection integrity",
+      "fixed protocol"
+    ],
+    "alternatives": [
+      "plateau stopping",
+      "best validation loss"
+    ],
+    "evidence_type": "primary-source protocol",
+    "primary_source": "evidence/g002-training-decision-sources.md#decision",
+    "reference_locator": "evidence/g002-training-decision-sources.md#decision",
+    "measurement_artifact": "evidence/g002-training-decision-sources.md",
+    "derivation": "The results are reported without retraining or TEST tuning.",
+    "limitations": "The rejected alternatives may be evaluated only under a separately pre-registered protocol.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "G002 protocol"
+  },
+  {
+    "decision_id": "DEC-GEO-001",
+    "scope": "geometry",
+    "decision": "Retain the 256×256 EfficientAD-S path as the baseline geometry after the full-branch tiling prototype failed seam/origin stability.",
+    "status": "accepted",
+    "drivers": [
+      "baseline stability",
+      "bounded comparison"
+    ],
+    "alternatives": [
+      "adopt legacy full-branch tiling"
+    ],
+    "evidence_type": "evaluation record",
+    "primary_source": "docs/SHEET_METAL_EVALUATION.md#geometry",
+    "reference_locator": "docs/SHEET_METAL_EVALUATION.md#geometry",
+    "measurement_artifact": "docs/SHEET_METAL_EVALUATION.md",
+    "derivation": "The 256×256 row is the same-checkpoint baseline.",
+    "limitations": "Baseline performance is not a claim of operational suitability.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "E1 baseline"
+  },
+  {
+    "decision_id": "DEC-GEO-002",
+    "scope": "geometry",
+    "decision": "Reject the legacy full-branch E2 tiling prototype as the selected geometry because its seam/origin stability gate did not pass; keep the record separate from E2-Split.",
+    "status": "rejected",
+    "drivers": [
+      "seam stability",
+      "origin stability"
+    ],
+    "alternatives": [
+      "retain legacy E2 as candidate"
+    ],
+    "evidence_type": "geometry decision evidence",
+    "primary_source": "evidence/g002-geometry-decision.json",
+    "reference_locator": "evidence/g002-geometry-decision.json",
+    "measurement_artifact": "evidence/g002-geometry-decision.json",
+    "derivation": "Legacy E2 and E2-Split are explicitly distinct in the evaluation document.",
+    "limitations": "The geometry artifact is a candidate derivation and does not guarantee overlap seam equivalence.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "legacy E2"
+  },
+  {
+    "decision_id": "DEC-SPLIT-003",
+    "scope": "geometry",
+    "decision": "Use the separate E2-Split path: local tiled teacher-student residual plus one global autoencoder-student residual, frozen on 19 normal validation images before one post-hoc TESTpub evaluation.",
+    "status": "accepted",
+    "drivers": [
+      "separate validation",
+      "high-resolution evidence"
+    ],
+    "alternatives": [
+      "reuse rejected legacy E2"
+    ],
+    "evidence_type": "implementation/evaluation record",
+    "primary_source": "docs/SHEET_METAL_EVALUATION.md#e2-split",
+    "reference_locator": "docs/SHEET_METAL_EVALUATION.md#e2-split",
+    "measurement_artifact": "docs/SHEET_METAL_EVALUATION.md",
+    "derivation": "EfficientAD E2-Split plus TensorRT/Triton is an independent implementation/validation route.",
+    "limitations": "The post-hoc pipeline comparison does not establish generalization or production selection.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "E2-Split TESTpub record"
+  },
+  {
+    "decision_id": "DEC-THR-001",
+    "scope": "threshold",
+    "decision": "Calibrate a raw-score threshold from frozen normal validation maps only and keep thresholded decisions outside the public comparison claim.",
+    "status": "accepted",
+    "drivers": [
+      "no-test-leakage",
+      "scope separation"
+    ],
+    "alternatives": [
+      "TEST-derived threshold",
+      "threshold-based public ranking"
+    ],
+    "evidence_type": "calibration code",
+    "primary_source": "src/fine_defect_ad/g002_calibration.py",
+    "reference_locator": "src/fine_defect_ad/g002_calibration.py",
+    "measurement_artifact": "src/fine_defect_ad/g002_calibration.py",
+    "derivation": "Reported comparison metrics are continuous Image AU-ROC/AU-PRO@0.05 without threshold selection.",
+    "limitations": "A normal-only mean-plus-three-sigma threshold is not an accepted operating threshold.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "G002 calibration"
+  },
+  {
+    "decision_id": "DEC-MET-001",
+    "scope": "metrics",
+    "decision": "Use the recorded local MVTec evaluator protocol for AU-PRO@0.05 while blocking claims of MVTec AD 2 server equivalence and unresolved comparator behavior.",
+    "status": "accepted",
+    "drivers": [
+      "metric provenance",
+      "claim discipline"
+    ],
+    "alternatives": [
+      "claim official AD 2 server equivalence"
+    ],
+    "evidence_type": "metric provenance",
+    "primary_source": "evidence/mvtec-metric-protocol.json",
+    "reference_locator": "evidence/mvtec-metric-protocol.json",
+    "measurement_artifact": "evidence/mvtec-metric-protocol.json",
+    "derivation": "The table labels AU-PRO@0.05 as a recorded evaluator output, not an official benchmark submission.",
+    "limitations": "The public protocol records unresolved > versus >= behavior and no server equivalence.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "MVTec evaluator v1.0 provenance"
+  },
+  {
+    "decision_id": "DEC-EXP-001",
+    "scope": "experiment",
+    "decision": "Compare both paths once on the same 114 anonymized TESTpub identities, 528×2112 raw-map geometry, and official-evaluator boundary without retraining or test tuning.",
+    "status": "accepted",
+    "drivers": [
+      "paired comparison",
+      "test integrity"
+    ],
+    "alternatives": [
+      "cross-split comparison",
+      "iterative TEST tuning"
+    ],
+    "evidence_type": "evaluation evidence",
+    "primary_source": "evidence/g002/evaluation_comparison.json",
+    "reference_locator": "evidence/g002/evaluation_comparison.json",
+    "measurement_artifact": "evidence/g002/evaluation_comparison.json",
+    "derivation": "The README limits the comparison to same TESTpub 114, anonymized IDs, raw-map geometry, evaluator, and hashes.",
+    "limitations": "One fixed public test comparison does not establish statistical significance or generalization.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "TESTpub 114 comparison"
+  },
+  {
+    "decision_id": "DEC-SRV-001",
+    "scope": "serving",
+    "decision": "Record EfficientAD E2-Split TensorRT FP32/Triton HTTP as a candidate serving evidence path only after backend/parity gates; do not claim deployed production service.",
+    "status": "accepted",
+    "drivers": [
+      "backend traceability",
+      "numerical preservation"
+    ],
+    "alternatives": [
+      "claim production deployment"
+    ],
+    "evidence_type": "deployment evaluation",
+    "primary_source": "docs/DEPLOYMENT_EVALUATION.md",
+    "reference_locator": "docs/DEPLOYMENT_EVALUATION.md",
+    "measurement_artifact": "docs/DEPLOYMENT_EVALUATION.md",
+    "derivation": "The repository records TensorRT/Triton implementation and numeric preservation evidence.",
+    "limitations": "The README explicitly does not provide an operational service deployment procedure.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "E2-Split TensorRT/Triton candidate"
+  },
+  {
+    "decision_id": "DEC-SRV-002",
+    "scope": "serving",
+    "decision": "Defer SuperADD/DINOv3 Triton serving scope; no public deployment claim is permitted until DINO export, feature/final-map parity, and bank serialization are separately validated.",
+    "status": "deferred",
+    "drivers": [
+      "scope honesty",
+      "missing parity evidence"
+    ],
+    "alternatives": [
+      "treat comparison runtime as serving evidence"
+    ],
+    "evidence_type": "public scope statement",
+    "primary_source": "README.md#구현비교-체계",
+    "reference_locator": "README.md#구현비교-체계",
+    "measurement_artifact": "README.md",
+    "derivation": "SuperADD Triton integration is outside the current comparison research scope.",
+    "limitations": "No SuperADD serving artifact or deployment validation is currently released.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "SuperADD comparison-only"
+  },
+  {
+    "decision_id": "DEC-FAL-001",
+    "scope": "failure handling",
+    "decision": "Fail closed when provenance, storage, lease, identity, or hash admission checks are missing or invalid.",
+    "status": "accepted",
+    "drivers": [
+      "integrity",
+      "safe failure"
+    ],
+    "alternatives": [
+      "best-effort continuation"
+    ],
+    "evidence_type": "admission code",
+    "primary_source": "src/fine_defect_ad/superadd_preflight.py",
+    "reference_locator": "src/fine_defect_ad/superadd_preflight.py",
+    "measurement_artifact": "src/fine_defect_ad/superadd_preflight.py",
+    "derivation": "Only hash-bound evidence is described as comparison evidence.",
+    "limitations": "Fail-closed checks improve evidence integrity but do not eliminate implementation defects.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "admission gates"
+  },
+  {
+    "decision_id": "DEC-OBS-001",
+    "scope": "observability",
+    "decision": "Persist bounded run evidence including command, status, limitations, lease events, and runtime/resource measurements.",
+    "status": "accepted",
+    "drivers": [
+      "auditability",
+      "diagnostics"
+    ],
+    "alternatives": [
+      "unstructured logs only"
+    ],
+    "evidence_type": "evidence schema",
+    "primary_source": "evidence/schemas/run-evidence.json",
+    "reference_locator": "evidence/schemas/run-evidence.json",
+    "measurement_artifact": "evidence/schemas/run-evidence.json",
+    "derivation": "Latency evidence is scope-labeled and not interpreted as a direct speed ranking.",
+    "limitations": "Observed measurements are host/run specific.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "run evidence schema"
+  },
+  {
+    "decision_id": "DEC-ENV-001",
+    "scope": "environment",
+    "decision": "Pin the R1 overlay and upstream-asset provenance; expose environment evidence without embedding private environment paths.",
+    "status": "accepted",
+    "drivers": [
+      "reproducibility",
+      "privacy"
+    ],
+    "alternatives": [
+      "floating dependency environment"
+    ],
+    "evidence_type": "environment provenance",
+    "primary_source": "evidence/r1-overlay-environment.json",
+    "reference_locator": "evidence/r1-overlay-environment.json",
+    "measurement_artifact": "evidence/r1-overlay-environment.json",
+    "derivation": "Actual execution lists required artifacts but does not disclose local paths.",
+    "limitations": "The lock/provenance files do not reproduce proprietary data, weights, drivers, or hardware.",
+    "reviewed_at": "2026-08-10",
+    "artifact_or_model_version": "R1 overlay"
+  }
 ]

@@ -19,49 +19,28 @@ def _read(path: Path):
 
 def _svg(width: int, height: int, body: str) -> str:
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{height}" viewBox="0 0 {width} {height}">'
-            '<style>text{font-family:system-ui,sans-serif;fill:#172033}.t{font-size:18px;font-weight:700}.s{font-size:12px;fill:#526070}.n{font-size:11px;fill:#526070}</style>'
+            '<style>text{font-family:system-ui,sans-serif;fill:#172033}.t{font-size:22px;font-weight:700}.s{font-size:16px;fill:#526070}.n{font-size:15px;fill:#526070}</style>'
             f'<rect width="100%" height="100%" fill="#f8fafc"/>{body}</svg>')
 
 
 def training_svg(metrics: list[dict]) -> str:
-    rows = [r for r in metrics if 'step' in r and 'train_loss' in r]
-    if not rows:
-        raise ValueError('metrics has no train_loss rows')
-    w, h, left, bottom = 720, 300, 54, 246
-    mx = max(r['step'] for r in rows); lo = min(r['train_loss'] for r in rows); hi = max(r['train_loss'] for r in rows)
-    span = max(hi - lo, 1e-12)
-    points = ' '.join(f"{left+(w-left-24)*r['step']/mx:.1f},{bottom-(bottom-48)*(r['train_loss']-lo)/span:.1f}" for r in rows)
-    return _svg(w,h, f'<text x="28" y="30" class="t">EfficientAD-S 학습 손실</text><text x="28" y="50" class="s">실행 증거 · 에폭 스냅샷 {len(rows)}개 · 단계 {mx}</text><line x1="{left}" y1="48" x2="{left}" y2="{bottom}" stroke="#cbd5e1"/><line x1="{left}" y1="{bottom}" x2="696" y2="{bottom}" stroke="#cbd5e1"/><polyline points="{points}" fill="none" stroke="#2563eb" stroke-width="3"/><text x="{left}" y="270" class="n">0</text><text x="650" y="270" class="n">{mx}</text><text x="{left}" y="72" class="n">손실 {hi:.3f}</text><text x="{left}" y="238" class="n">손실 {lo:.3f}</text>')
+    rows=[r for r in metrics if 'step' in r and 'train_loss' in r]
+    if not rows: raise ValueError('metrics has no train_loss rows')
+    w,h,left,bottom=640,390,64,310; mx=max(r['step'] for r in rows); lo=min(r['train_loss'] for r in rows); hi=max(r['train_loss'] for r in rows); span=max(hi-lo,1e-12)
+    points=' '.join(f"{left+(w-left-28)*r['step']/mx:.1f},{bottom-(bottom-128)*(r['train_loss']-lo)/span:.1f}" for r in rows)
+    return _svg(w,h,f'<text x="24" y="34" class="t">EfficientAD-S 학습 손실</text><text x="24" y="60" class="s">실행 증거 · 에폭 스냅샷 {len(rows)}개 · 단계 {mx}</text><line x1="{left}" y1="118" x2="{left}" y2="{bottom}" stroke="#cbd5e1"/><line x1="{left}" y1="{bottom}" x2="612" y2="{bottom}" stroke="#cbd5e1"/><polyline points="{points}" fill="none" stroke="#2563eb" stroke-width="3"/><text x="{left}" y="340" class="n">단계 0</text><text x="520" y="340" class="n">단계 {mx}</text><text x="{left}" y="105" class="n">손실 {hi:.3f}</text><text x="{left}" y="294" class="n">손실 {lo:.3f}</text><text x="24" y="374" class="n">축은 기록된 train loss 범위만 표시합니다.</text>')
 
 
 def geometry_svg(freeze: dict) -> str:
-    rev = freeze['revision']; selection = freeze['selection']; e2=selection['measured_gates']['E2']; empirical=freeze['geometry']['empirical_border']
-    seam_status = '통과' if e2['origin_seam_valid'] else '미통과'
-    return _svg(820,330, f'<text x="28" y="30" class="t">타일 경계 처리 결정: 256×256 기준 경로 유지</text><text x="28" y="52" class="s">검증 정상 이미지 쌍 비교 · 결정 {escape(freeze["decision_id"])}</text><rect x="42" y="82" width="290" height="160" rx="10" fill="#dcfce7" stroke="#16a34a"/><text x="62" y="112" class="t">256×256 기준 경로</text><text x="62" y="140" class="s">내부 식별자: E1</text><text x="62" y="164" class="s">범위·무결성·시임 게이트 통과</text><text x="62" y="188" class="s">결정: 기준 경로 유지</text><rect x="488" y="82" width="290" height="160" rx="10" fill="#fee2e2" stroke="#dc2626"/><text x="508" y="112" class="t">전체 분기 타일링 경로</text><text x="508" y="140" class="s">legacy E2</text><text x="508" y="164" class="s">border 기록: {rev["initial_border"]} → {rev["revised_border"]} → {empirical} px</text><text x="508" y="188" class="s">시임/원점 안정성: {seam_status} · 미채택</text><text x="382" y="164" class="n">쌍 비교</text><text x="28" y="282" class="n">DEC-GEO-002는 후속 분기 분리형 고해상도 타일링 후보(DEC-SPLIT-003)와 별개의 기하 결정입니다.</text><text x="28" y="304" class="n">이 결정에는 TESTpub·OOD 입력을 사용하지 않았습니다.</text>')
+    rev=freeze['revision']; selection=freeze['selection']; e2=selection['measured_gates']['E2']; empirical=freeze['geometry']['empirical_border']; seam='통과' if e2['origin_seam_valid'] else '미통과'
+    return _svg(640,540,f'<text x="24" y="34" class="t">타일 경계 처리 결정: 256×256 기준 경로 유지</text><text x="24" y="60" class="s">검증 정상 이미지 쌍 비교 · 결정 {escape(freeze["decision_id"])}</text><rect x="24" y="90" width="592" height="150" rx="10" fill="#dcfce7" stroke="#16a34a"/><text x="44" y="122" class="t">256×256 기준 경로</text><text x="44" y="150" class="s">내부 식별자: E1 · 범위·무결성·시임 게이트 통과</text><text x="44" y="180" class="s">결정: 기준 경로 유지</text><rect x="24" y="266" width="592" height="166" rx="10" fill="#fee2e2" stroke="#dc2626"/><text x="44" y="298" class="t">전체 분기 타일링 경로</text><text x="44" y="326" class="s">legacy E2 · border 기록: {rev["initial_border"]} → {rev["revised_border"]} → {empirical} px</text><text x="44" y="356" class="s">시임/원점 안정성: {seam} · 미채택</text><text x="24" y="474" class="n">DEC-GEO-002는 후속 분기 분리형 고해상도 타일링 후보</text><text x="24" y="498" class="n">(DEC-SPLIT-003)와 별개의 기하 결정입니다.</text><text x="24" y="522" class="n">이 결정에는 TESTpub·OOD 입력을 사용하지 않았습니다.</text>')
 
 
 def architecture_svg() -> str:
-    arrow = '<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3z" fill="#64748b"/></marker></defs>'
-    def box(x, y, w, h, fill, title, detail):
-        rect = f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="#64748b"/>'
-        if not detail:
-            return rect + f'<text x="{x+w/2}" y="{y+h/2+6}" class="t" text-anchor="middle">{title}</text>'
-        return rect + f'<text x="{x+20}" y="{y+38}" class="t">{title}</text><text x="{x+20}" y="{y+67}" class="s">{detail}</text>'
-    body = ('<text x="48" y="48" class="t">고해상도 분할 추론과 TensorRT FP32 서빙 경로</text>'
-            '<text x="48" y="74" class="s">같은 EfficientAD-S 체크포인트 · TensorRT FP32 plan · Triton HTTP binary transport</text>'
-            + box(400, 105, 320, 72, '#ffffff', '고해상도 입력 이미지', '원본 해상도 유지')
-            + box(400, 215, 320, 86, '#e0f2fe', '고해상도 타일 분할', '256×256 타일 · 고정 기하')
-            + box(125, 355, 355, 90, '#ede9fe', 'TensorRT FP32 plan', '고정 입력 · 배치 4')
-            + box(640, 355, 355, 90, '#fff7ed', 'Triton server', 'plan load · HTTP binary transport')
-            + box(335, 470, 450, 86, '#dcfce7', 'stitch · 맵 결합', 'Hann stitch · 동결 분위수 정규화')
-            + box(335, 585, 450, 38, '#ffffff', '원시 이상 맵 → 검증 / TESTpub 평가', '')
-            + '<path d="M560 177v31" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-            + '<path d="M560 301v25H302v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-            + '<path d="M480 400h153" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-            + '<path d="M818 445v12H760v6" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-            + '<path d="M560 556v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
-            + arrow)
-    return _svg(1120, 640, body)
+    arrow='<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3z" fill="#64748b"/></marker></defs>'
+    def box(y,title,detail,fill): return f'<rect x="48" y="{y}" width="544" height="62" rx="10" fill="{fill}" stroke="#64748b"/><text x="68" y="{y+26}" class="t">{title}</text><text x="68" y="{y+50}" class="s">{detail}</text>'
+    ys=(108,200,292,384,476,568); body='<text x="24" y="34" class="t">고해상도 분할 추론과 TensorRT FP32 서빙 경로</text><text x="24" y="60" class="s">같은 EfficientAD-S 체크포인트 · Triton HTTP binary transport</text>'+box(ys[0],'고해상도 입력 이미지','원본 해상도 유지','#fff')+box(ys[1],'고해상도 타일 분할','256×256 타일 · 고정 기하','#e0f2fe')+box(ys[2],'TensorRT FP32 plan','고정 입력 · 배치 4','#ede9fe')+box(ys[3],'Triton server','plan load · HTTP binary transport','#fff7ed')+box(ys[4],'stitch · 맵 결합','Hann stitch · 동결 분위수 정규화','#dcfce7')+box(ys[5],'원시 이상 맵','검증 / TESTpub 평가','#fff')+''.join(f'<path d="M320 {y+62}v24" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>' for y in ys[:-1])+arrow
+    return _svg(640,650,body)
 
 
 # Public labels are deliberately narrow summaries of the immutable run evidence.
@@ -81,39 +60,8 @@ SERVING_EVIDENCE = {
 
 
 def serving_evidence_svg(evidence: dict = SERVING_EVIDENCE) -> str:
-    """Render compact, value-labelled serving and backend-A/B evidence."""
-    baseline = float(evidence["baseline_latency_seconds"])
-    candidate = float(evidence["candidate_latency_seconds"])
-    reduction = (1 - candidate / baseline) * 100
-    auroc_delta = float(evidence["image_auroc_candidate"]) - float(evidence["image_auroc_baseline"])
-    aupro_delta = float(evidence["au_pro_candidate"]) - float(evidence["au_pro_baseline"])
-    reserved_mib = int(evidence["gpu_reserved_bytes"]) / 1024 / 1024
-    digest = str(evidence["image_digest"])
-    digest_summary = escape(f"{digest[:8]}…{digest[-8:]}") if len(digest) > 16 else escape(digest)
-    body = (
-        '<text x="48" y="48" class="t">TensorRT FP32 + Triton: 측정 요약</text>'
-        '<text x="48" y="74" class="s">대표 단일 이미지 지연과 114-image backend A/B 평가는 서로 다른 측정입니다.</text>'
-        '<rect x="48" y="104" width="1024" height="112" rx="12" fill="#e0f2fe" stroke="#64748b"/>'
-        '<text x="72" y="138" class="t">대표 고해상도 E2E 지연</text>'
-        f'<text x="72" y="168" class="s">TorchScript B4 {baseline:.4f} s/image → TensorRT FP32 {candidate:.4f} s/image</text>'
-        f'<text x="72" y="196" class="t">{reduction:.1f}% 감소</text>'
-        '<text x="438" y="138" class="s">단일 대표 이미지 · 256 tiles · 서버 준비 후 측정</text>'
-        '<text x="438" y="168" class="s">실시간 처리량 또는 운영 SLA 주장이 아님</text>'
-        '<rect x="48" y="242" width="498" height="184" rx="12" fill="#f8fafc" stroke="#64748b"/>'
-        '<text x="72" y="276" class="t">TESTpub backend A/B · 114 images</text>'
-        '<text x="72" y="306" class="s">동일 체크포인트 · 재보정/튜닝 없음</text>'
-        f'<text x="72" y="340" class="s">Image AU-ROC  {float(evidence["image_auroc_baseline"]):.6f} → {float(evidence["image_auroc_candidate"]):.6f} ({auroc_delta:+.6f})</text>'
-        f'<text x="72" y="372" class="s">AU-PRO@0.05  {float(evidence["au_pro_baseline"]):.6f} → {float(evidence["au_pro_candidate"]):.6f} ({aupro_delta:+.6f})</text>'
-        '<text x="72" y="402" class="n">총 evaluator 시간은 114장 전체 실행 시간이며, 대표 지연과 직접 비교하지 않습니다.</text>'
-        '<rect x="574" y="242" width="498" height="184" rx="12" fill="#f8fafc" stroke="#64748b"/>'
-        '<text x="598" y="276" class="t">검증·실행 결속</text>'
-        f'<text x="598" y="306" class="s">검증 이미지 {int(evidence["parity_images"])}장: 이미지 판정 동일</text>'
-        f'<text x="598" y="338" class="s">측정 불확실성 대역 밖 판정 flip: {int(evidence["outside_band_flips"])}</text>'
-        f'<text x="598" y="370" class="s">서버 준비 후 GPU reserved peak: {reserved_mib:.1f} MiB</text>'
-        f'<text x="598" y="402" class="n">고정 Triton image digest: sha256:{digest_summary}</text>'
-        '<text x="560" y="460" class="n" text-anchor="middle">후보 백엔드의 수치 보존과 추적성 검증 결과이며, production promotion 결론은 아닙니다.</text>'
-    )
-    return _svg(1120, 490, body)
+    b=float(evidence['baseline_latency_seconds']); c=float(evidence['candidate_latency_seconds']); reduction=(1-c/b)*100; ad=float(evidence['image_auroc_candidate'])-float(evidence['image_auroc_baseline']); pd=float(evidence['au_pro_candidate'])-float(evidence['au_pro_baseline']); mib=int(evidence['gpu_reserved_bytes'])/1024/1024
+    return _svg(640,620,f'<text x="24" y="34" class="t">TensorRT FP32 + Triton: 측정 요약</text><text x="24" y="60" class="s">대표 단일 이미지 지연과 114-image backend A/B 평가는 서로 다릅니다.</text><rect x="24" y="90" width="592" height="120" rx="10" fill="#e0f2fe" stroke="#64748b"/><text x="44" y="122" class="t">대표 고해상도 E2E 지연</text><text x="44" y="150" class="s">TorchScript B4 {b:.4f} s/image → TensorRT FP32 {c:.4f} s/image</text><text x="44" y="182" class="t">{reduction:.1f}% 감소</text><rect x="24" y="236" width="592" height="190" rx="10" fill="#f8fafc" stroke="#64748b"/><text x="44" y="268" class="t">TESTpub backend A/B · 114 images</text><text x="44" y="296" class="s">동일 체크포인트 · 재보정/튜닝 없음</text><text x="44" y="328" class="s">Image AU-ROC  {float(evidence["image_auroc_baseline"]):.6f} → {float(evidence["image_auroc_candidate"]):.6f} ({ad:+.6f})</text><text x="44" y="360" class="s">AU-PRO@0.05  {float(evidence["au_pro_baseline"]):.6f} → {float(evidence["au_pro_candidate"]):.6f} ({pd:+.6f})</text><text x="44" y="402" class="n">총 evaluator 시간은 대표 지연과 직접 비교하지 않습니다.</text><rect x="24" y="452" width="592" height="100" rx="10" fill="#f8fafc" stroke="#64748b"/><text x="44" y="484" class="t">검증·실행 결속</text><text x="44" y="512" class="s">검증 이미지 {int(evidence["parity_images"])}장 · 판정 flip: {int(evidence["outside_band_flips"])} · GPU reserved peak {mib:.1f} MiB</text><text x="24" y="590" class="n">수치 보존과 추적성 검증 결과이며 production promotion 결론은 아닙니다.</text>')
 
 
 def _find_source(root: Path, identity: str, digest: str) -> Path:
@@ -180,8 +128,3 @@ def main() -> None:
     print(json.dumps(render(artifact_root=args.artifact_root,dataset_root=args.dataset_root,run_id=args.run_id,public_dir=args.public_dir,preview_dir=args.preview_dir),indent=2))
 
 if __name__=='__main__': main()
-
-
-def candidate_comparison_svg() -> str:
-    """Raw-map-only independent pipeline comparison; latency scopes are separate."""
-    return _svg(1120, 180, '<text x="48" y="48" class="t">Independent pipeline comparison</text><text x="48" y="78" class="s">SuperADD/DINOv3: Image AU-ROC 0.83935185 · AU-PRO@0.05 0.43140701</text><text x="48" y="108" class="s">Same TESTpub 114 · anonymized IDs · 528×2112 · official evaluator · hash bindings</text><text x="48" y="140" class="n">Latency scopes are not directly comparable. SuperADD Triton is outside current comparison scope; separate deployment validation required.</text>')

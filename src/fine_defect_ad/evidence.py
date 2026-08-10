@@ -20,10 +20,10 @@ FAILURE_STATUSES = frozenset({"STORAGE_BLOCKED", "STOPPED_INCOMPLETE", "INVALIDA
 
 
 def validate_der(item: dict[str, Any]) -> None:
-    missing = DER_REQUIRED - item.keys()
-    if missing or not str(item.get("decision_id", "")).startswith("DEC-"):
-        raise ValueError(f"invalid DER: missing={sorted(missing)}")
-    if item["status"] not in {"proposed", "accepted", "superseded", "blocked"}:
+    missing = DER_REQUIRED - item.keys(); extra = item.keys() - DER_REQUIRED
+    if missing or extra or not str(item.get("decision_id", "")).startswith("DEC-"):
+        raise ValueError(f"invalid DER: missing={sorted(missing)} extra={sorted(extra)}")
+    if item["status"] not in {"proposed", "accepted", "rejected", "deferred", "superseded", "blocked"}:
         raise ValueError("invalid DER status")
 
 def validate_decision_register(path: Path) -> list[dict[str, Any]]:

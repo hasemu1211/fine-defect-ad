@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {"requirement_id":"REQ-ARC","decision_id":"DEC-ARC-001","code":"src/fine_defect_ad/paired_rawmap_analysis.py","test":"tests/test_paired_rawmap_analysis.py","artifact":"docs/assets/system-architecture.svg","readme_claim":"두 독립 파이프라인"},
+    {"requirement_id":"REQ-QUA","decision_id":"DEC-QUA-001","code":"src/fine_defect_ad/portfolio_render.py","test":"tests/test_portfolio_render.py","artifact":"docs/assets/candidate-comparison.svg","readme_claim":"원본 제조 이미지"},
+    {"requirement_id":"REQ-DAT-001","decision_id":"DEC-DAT-001","code":"src/fine_defect_ad/manifest.py","test":"tests/test_manifest_builder.py","artifact":"evidence/r1-sheet-metal-manifest.json","readme_claim":"익명화 ID"},
+    {"requirement_id":"REQ-DAT-002","decision_id":"DEC-DAT-002","code":"src/fine_defect_ad/acquire_mvtecad2.py","test":"tests/test_acquire_mvtecad2.py","artifact":"evidence/mvtec-metric-provenance.json","readme_claim":"원본 제조 이미지"},
+    {"requirement_id":"REQ-MOD-001","decision_id":"DEC-MOD-001","code":"src/fine_defect_ad/g002_training.py","test":"tests/test_g002_training.py","artifact":"evidence/g002-training-decision-sources.md","readme_claim":"EfficientAD E2-Split"},
+    {"requirement_id":"REQ-MOD-002","decision_id":"DEC-MOD-002","code":"src/fine_defect_ad/superadd_preflight.py","test":"tests/test_superadd_preflight.py","artifact":"docs/PAIRED_RAWMAP_ANALYSIS.md","readme_claim":"SuperADD/DINOv3"},
+    {"requirement_id":"REQ-TRN-001","decision_id":"DEC-TRN-001","code":"src/fine_defect_ad/g002_eval_runtime.py","test":"tests/test_g002_eval_runtime.py","artifact":"evidence/r1-sheet-metal-manifest.json","readme_claim":"정상 이미지로만"},
+    {"requirement_id":"REQ-TRN-002","decision_id":"DEC-TRN-002","code":"src/fine_defect_ad/g002_training.py","test":"tests/test_g002_training.py","artifact":"evidence/g002-training-decision-sources.md","readme_claim":"TEST tuning"},
+    {"requirement_id":"REQ-TRN-003","decision_id":"DEC-TRN-003","code":"src/fine_defect_ad/g002_eval_runtime.py","test":"tests/test_g002_eval_runtime.py","artifact":"evidence/g002/evaluation_comparison.json","readme_claim":"SHA-256 결속"},
+    {"requirement_id":"REQ-TRN-004","decision_id":"DEC-TRN-004","code":"src/fine_defect_ad/g002_training.py","test":"tests/test_g002_training.py","artifact":"evidence/g002-training-decision-sources.md","readme_claim":"실제 실행"},
+    {"requirement_id":"REQ-TRN-005","decision_id":"DEC-TRN-005","code":"src/fine_defect_ad/g002_training.py","test":"tests/test_g002_training.py","artifact":"evidence/g002-training-decision-sources.md","readme_claim":"재학습"},
+    {"requirement_id":"REQ-GEO-001","decision_id":"DEC-GEO-001","code":"src/fine_defect_ad/highres_split.py","test":"tests/test_highres_split.py","artifact":"evidence/g002/baseline_evaluation.json","readme_claim":"256×256 기준선"},
+    {"requirement_id":"REQ-GEO-002","decision_id":"DEC-GEO-002","code":"src/fine_defect_ad/g002_e2_runtime.py","test":"tests/test_g002_geometry.py","artifact":"evidence/g002-geometry-decision.json","readme_claim":"E2-Split"},
+    {"requirement_id":"REQ-SPLIT","decision_id":"DEC-SPLIT-003","code":"src/fine_defect_ad/g002_e2_split_runner.py","test":"tests/test_g002_e2_runtime.py","artifact":"evidence/g002/evaluation_comparison.json","readme_claim":"E2-Split"},
+    {"requirement_id":"REQ-THR","decision_id":"DEC-THR-001","code":"src/fine_defect_ad/g002_calibration.py","test":"tests/test_g002_calibration.py","artifact":"evidence/mvtec-metric-protocol.json","readme_claim":"threshold 선택 없이"},
+    {"requirement_id":"REQ-MET","decision_id":"DEC-MET-001","code":"src/fine_defect_ad/mvtec_aupro.py","test":"tests/test_mvtec_metric_evidence.py","artifact":"evidence/mvtec-metric-protocol.json","readme_claim":"AU-PRO@0.05"},
+    {"requirement_id":"REQ-EXP","decision_id":"DEC-EXP-001","code":"src/fine_defect_ad/superadd_comparison.py","test":"tests/test_superadd_comparison.py","artifact":"evidence/g002/evaluation_comparison.json","readme_claim":"동일 TESTpub 114"},
+    {"requirement_id":"REQ-SRV-001","decision_id":"DEC-SRV-001","code":"src/fine_defect_ad/triton_promotion.py","test":"tests/test_triton_promotion.py","artifact":"docs/DEPLOYMENT_EVALUATION.md","readme_claim":"TensorRT/Triton"},
+    {"requirement_id":"REQ-SRV-002","decision_id":"DEC-SRV-002","code":"src/fine_defect_ad/superadd_preflight.py","test":"tests/test_superadd_preflight.py","artifact":"docs/DEPLOYMENT_EVALUATION.md","readme_claim":"SuperADD의 Triton 연결"},
+    {"requirement_id":"REQ-FAL","decision_id":"DEC-FAL-001","code":"src/fine_defect_ad/superadd_preflight.py","test":"tests/test_superadd_preflight.py","artifact":"evidence/triton-r0-smoke.json","readme_claim":"SHA-256 결속"},
+    {"requirement_id":"REQ-OBS","decision_id":"DEC-OBS-001","code":"src/fine_defect_ad/evidence.py","test":"tests/test_r0.py","artifact":"evidence/schemas/run-evidence.json","readme_claim":"지연은 서로 다른 evidence scope"},
+    {"requirement_id":"REQ-ENV","decision_id":"DEC-ENV-001","code":"src/fine_defect_ad/r1_overlay.py","test":"tests/test_r1_overlay.py","artifact":"evidence/r1-overlay-environment.json","readme_claim":"실제 실행에는"},
+    {"requirement_id":"REQ-RUN","decision_id":"DEC-RUN-001","code":"src/fine_defect_ad/gpu_lock.py","test":"tests/test_r0.py","artifact":"evidence/triton-r0-smoke.json","readme_claim":"GPU lease"},
+    {"requirement_id":"REQ-STO","decision_id":"DEC-STO-001","code":"src/fine_defect_ad/storage.py","test":"tests/test_r0.py","artifact":"evidence/triton-r0-smoke.json","readme_claim":"GPU lease 디렉터리"}
+  ]
+}

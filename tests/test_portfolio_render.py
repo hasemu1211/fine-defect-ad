@@ -1,4 +1,5 @@
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from fine_defect_ad.portfolio_render import render, serving_evidence_svg
@@ -12,14 +13,11 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     public=tmp_path/'public'; result=render(artifact_root=artifacts,dataset_root=None,run_id=run,public_dir=public,preview_dir=None)
     assert result['selected_geometry']=='E1'
     geometry=(public/'geometry-selection.svg').read_text()
-    assert 'height="330"' in geometry and '256×256 기준 경로' in geometry and '시임/원점 안정성: 미통과' in geometry and '분기 분리형 고해상도 타일링 후보' in geometry and 'DEC-SPLIT-003' in geometry
+    assert 'height="540"' in geometry and '256×256 기준 경로' in geometry and '시임/원점 안정성: 미통과' in geometry and '분기 분리형 고해상도 타일링 후보' in geometry and 'DEC-SPLIT-003' in geometry
     assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg']
     architecture=(public/'system-architecture.svg').read_text()
-    assert 'width="100%" height="640"' in architecture and '고해상도 타일 분할' in architecture and 'TensorRT FP32 plan' in architecture and 'Triton server' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
-    for connector in ('M560 177v31', 'M560 301v25H302v22', 'M480 400h153', 'M818 445v12H760v6', 'M560 556v22'):
-        assert f'd="{connector}"' in architecture
+    assert 'width="100%" height="650"' in architecture and '고해상도 타일 분할' in architecture and 'TensorRT FP32 plan' in architecture and 'Triton server' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
     assert architecture.count('marker-end="url(#a)"') == 5
-    assert 'x="560.0" y="610.0" class="t" text-anchor="middle">원시 이상 맵 → 검증 / TESTpub 평가</text>' in architecture
     serving=(public/'serving-evidence.svg').read_text()
     assert '2.4610 s/image → TensorRT FP32 2.1040 s/image' in serving
     assert 'Image AU-ROC  0.734722 → 0.733333 (-0.001389)' in serving
@@ -58,7 +56,14 @@ def test_preview_metadata_binds_each_png(tmp_path):
         assert row['preview_sha256']==sha256((preview/row['file']).read_bytes()).hexdigest()
 
 def test_candidate_comparison_keeps_latency_scopes_separate():
-    from fine_defect_ad.portfolio_render import candidate_comparison_svg
-    svg = candidate_comparison_svg()
-    assert 'not directly comparable' in svg
-    assert 'Same TESTpub 114' in svg
+    svg = (Path(__file__).parents[1] / 'docs/assets/candidate-comparison.svg').read_text()
+    assert '직접 비교 불가' in svg
+    assert '동일 TESTpub 114' in svg
+    assert 'width="640"' in svg
+    assert min(map(int, re.findall(r'font-size:(\d+)px', svg))) >= 16
+
+
+def test_readme_svg_source_fonts_stay_mobile_legible():
+    assets=Path(__file__).parents[1]/'docs/assets'
+    for name in ('geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg'):
+        text=(assets/name).read_text(); sizes=list(map(int,re.findall(r'font-size:(\d+)px',text))); assert min(sizes)>=15
