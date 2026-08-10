@@ -1,4 +1,4 @@
-"""Render small, reproducible portfolio evidence from G002 artifacts."""
+"""Render small, reproducible portfolio evidence from recorded artifacts."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +18,7 @@ def _read(path: Path):
 
 
 def _svg(width: int, height: int, body: str) -> str:
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">' 
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{height}" viewBox="0 0 {width} {height}">'
             '<style>text{font-family:system-ui,sans-serif;fill:#172033}.t{font-size:18px;font-weight:700}.s{font-size:12px;fill:#526070}.n{font-size:11px;fill:#526070}</style>'
             f'<rect width="100%" height="100%" fill="#f8fafc"/>{body}</svg>')
 
@@ -47,16 +47,70 @@ def architecture_svg() -> str:
         if not detail:
             return rect + f'<text x="{x+w/2}" y="{y+h/2+6}" class="t" text-anchor="middle">{title}</text>'
         return rect + f'<text x="{x+20}" y="{y+38}" class="t">{title}</text><text x="{x+20}" y="{y+67}" class="s">{detail}</text>'
-    body = ('<text x="48" y="48" class="t">E2-Split 고해상도 평가 경로</text>'
-            '<text x="48" y="74" class="s">동일 EfficientAD-S 체크포인트 · 검증 데이터로만 분위수 동결</text>'
-            + box(400, 105, 320, 84, '#ffffff', '고해상도 입력 이미지', '원본 해상도 유지')
-            + box(70, 265, 440, 130, '#e0f2fe', '국소 이상 맵', '256×256 타일 · 교사–학생 잔차 · Hann stitch')
-            + box(610, 265, 440, 130, '#ede9fe', '전역 이상 맵', 'canonical 256×256 · 오토인코더–학생 잔차')
-            + box(335, 470, 450, 86, '#dcfce7', '맵 결합', '동결 분위수로 정규화 후 결합')
-            + box(335, 585, 450, 38, '#fff7ed', '원시 이상 맵 → 검증 / TESTpub 평가', '')
-            + '<path d="M560 189v35H290v31M560 224h270v31M290 395v34h270M830 395v34H560M560 556v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+    body = ('<text x="48" y="48" class="t">고해상도 분할 추론과 TensorRT FP32 서빙 경로</text>'
+            '<text x="48" y="74" class="s">같은 EfficientAD-S 체크포인트 · TensorRT FP32 plan · Triton HTTP binary transport</text>'
+            + box(400, 105, 320, 72, '#ffffff', '고해상도 입력 이미지', '원본 해상도 유지')
+            + box(400, 215, 320, 86, '#e0f2fe', '고해상도 타일 분할', '256×256 타일 · 고정 기하')
+            + box(125, 355, 355, 90, '#ede9fe', 'TensorRT FP32 plan', '고정 입력 · 배치 4')
+            + box(640, 355, 355, 90, '#fff7ed', 'Triton server', 'plan load · HTTP binary transport')
+            + box(335, 470, 450, 86, '#dcfce7', 'stitch · 맵 결합', 'Hann stitch · 동결 분위수 정규화')
+            + box(335, 585, 450, 38, '#ffffff', '원시 이상 맵 → 검증 / TESTpub 평가', '')
+            + '<path d="M560 177v38M560 301v25H302v29M480 400h160M818 445v25H560" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
+            + '<path d="M560 556v22" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>'
             + arrow)
     return _svg(1120, 640, body)
+
+
+# Public labels are deliberately narrow summaries of the immutable run evidence.
+# They contain no host paths or dataset images.
+SERVING_EVIDENCE = {
+    "baseline_latency_seconds": 2.4610,
+    "candidate_latency_seconds": 2.1040,
+    "image_auroc_baseline": 0.734722,
+    "image_auroc_candidate": 0.733333,
+    "au_pro_baseline": 0.132685,
+    "au_pro_candidate": 0.132769,
+    "parity_images": 3,
+    "outside_band_flips": 0,
+    "gpu_reserved_bytes": 465_567_744,
+    "image_digest": "a40838bb4587d2aceb46b1e7fd144afb24c9016c219dd3eba31716e4e28dbfc7",
+}
+
+
+def serving_evidence_svg(evidence: dict = SERVING_EVIDENCE) -> str:
+    """Render compact, value-labelled serving and backend-A/B evidence."""
+    baseline = float(evidence["baseline_latency_seconds"])
+    candidate = float(evidence["candidate_latency_seconds"])
+    reduction = (1 - candidate / baseline) * 100
+    auroc_delta = float(evidence["image_auroc_candidate"]) - float(evidence["image_auroc_baseline"])
+    aupro_delta = float(evidence["au_pro_candidate"]) - float(evidence["au_pro_baseline"])
+    reserved_mib = int(evidence["gpu_reserved_bytes"]) / 1024 / 1024
+    digest = str(evidence["image_digest"])
+    digest_summary = escape(f"{digest[:8]}…{digest[-8:]}") if len(digest) > 16 else escape(digest)
+    body = (
+        '<text x="48" y="48" class="t">TensorRT FP32 + Triton: 측정 요약</text>'
+        '<text x="48" y="74" class="s">대표 단일 이미지 지연과 114-image backend A/B 평가는 서로 다른 측정입니다.</text>'
+        '<rect x="48" y="104" width="1024" height="112" rx="12" fill="#e0f2fe" stroke="#64748b"/>'
+        '<text x="72" y="138" class="t">대표 고해상도 E2E 지연</text>'
+        f'<text x="72" y="168" class="s">TorchScript B4 {baseline:.4f} s/image → TensorRT FP32 {candidate:.4f} s/image</text>'
+        f'<text x="72" y="196" class="t">{reduction:.1f}% 감소</text>'
+        '<text x="438" y="138" class="s">단일 대표 이미지 · 256 tiles · 서버 준비 후 측정</text>'
+        '<text x="438" y="168" class="s">실시간 처리량 또는 운영 SLA 주장이 아님</text>'
+        '<rect x="48" y="242" width="498" height="184" rx="12" fill="#f8fafc" stroke="#64748b"/>'
+        '<text x="72" y="276" class="t">TESTpub backend A/B · 114 images</text>'
+        '<text x="72" y="306" class="s">동일 체크포인트 · 재보정/튜닝 없음</text>'
+        f'<text x="72" y="340" class="s">Image AU-ROC  {float(evidence["image_auroc_baseline"]):.6f} → {float(evidence["image_auroc_candidate"]):.6f} ({auroc_delta:+.6f})</text>'
+        f'<text x="72" y="372" class="s">AU-PRO@0.05  {float(evidence["au_pro_baseline"]):.6f} → {float(evidence["au_pro_candidate"]):.6f} ({aupro_delta:+.6f})</text>'
+        '<text x="72" y="402" class="n">총 evaluator 시간은 114장 전체 실행 시간이며, 대표 지연과 직접 비교하지 않습니다.</text>'
+        '<rect x="574" y="242" width="498" height="184" rx="12" fill="#f8fafc" stroke="#64748b"/>'
+        '<text x="598" y="276" class="t">검증·실행 결속</text>'
+        f'<text x="598" y="306" class="s">검증 이미지 {int(evidence["parity_images"])}장: 이미지 판정 동일</text>'
+        f'<text x="598" y="338" class="s">측정 불확실성 대역 밖 판정 flip: {int(evidence["outside_band_flips"])}</text>'
+        f'<text x="598" y="370" class="s">서버 준비 후 GPU reserved peak: {reserved_mib:.1f} MiB</text>'
+        f'<text x="598" y="402" class="n">고정 Triton image digest: sha256:{digest_summary}</text>'
+        '<text x="560" y="460" class="n" text-anchor="middle">후보 백엔드의 수치 보존과 추적성 검증 결과이며, production promotion 결론은 아닙니다.</text>'
+    )
+    return _svg(1120, 490, body)
 
 
 def _find_source(root: Path, identity: str, digest: str) -> Path:
@@ -101,7 +155,8 @@ def render(*, artifact_root: Path, dataset_root: Path | None, run_id: str, publi
     manifest=_read(artifact_root/f'g002-validation-raw-maps-{run_id}.json')
     if not calibration or not freeze: raise FileNotFoundError('calibration and frozen geometry artifacts are required')
     public_dir.mkdir(parents=True,exist_ok=True)
-    assets={'training-curve.svg':training_svg(metrics),'geometry-selection.svg':geometry_svg(freeze),'system-architecture.svg':architecture_svg()}
+    assets={'training-curve.svg':training_svg(metrics),'geometry-selection.svg':geometry_svg(freeze),
+            'system-architecture.svg':architecture_svg(),'serving-evidence.svg':serving_evidence_svg()}
     for name,text in assets.items(): (public_dir/name).write_text(text+'\n')
     scores={r['image_identity']:r for r in calibration['per_image_max_raw_scores']}
     entries=[{**m,**scores[m['image_identity']]} for m in manifest['maps']]

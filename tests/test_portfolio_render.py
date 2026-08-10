@@ -1,7 +1,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
-from fine_defect_ad.portfolio_render import render
+from fine_defect_ad.portfolio_render import render, serving_evidence_svg
 
 def test_public_assets_have_no_absolute_paths(tmp_path):
     artifacts=tmp_path/'artifacts'; artifacts.mkdir(); run='r';
@@ -13,11 +13,30 @@ def test_public_assets_have_no_absolute_paths(tmp_path):
     assert result['selected_geometry']=='E1'
     geometry=(public/'geometry-selection.svg').read_text()
     assert 'height="330"' in geometry and '256×256 기준 경로' in geometry and '시임/원점 안정성: 미통과' in geometry and '분기 분리형 고해상도 타일링 후보' in geometry and 'DEC-SPLIT-003' in geometry
-    assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','system-architecture.svg','training-curve.svg']
+    assert sorted(p.name for p in public.iterdir())==['geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg']
     architecture=(public/'system-architecture.svg').read_text()
-    assert 'width="1120" height="640"' in architecture and '국소 이상 맵' in architecture and '전역 이상 맵' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
+    assert 'width="100%" height="640"' in architecture and '고해상도 타일 분할' in architecture and 'TensorRT FP32 plan' in architecture and 'Triton server' in architecture and 'Hann stitch' in architecture and 'E1' not in architecture
+    assert 'M560 177v38M560 301v25H302v29M480 400h160M818 445v25H560' in architecture
     assert 'x="560.0" y="610.0" class="t" text-anchor="middle">원시 이상 맵 → 검증 / TESTpub 평가</text>' in architecture
+    serving=(public/'serving-evidence.svg').read_text()
+    assert '2.4610 s/image → TensorRT FP32 2.1040 s/image' in serving
+    assert 'Image AU-ROC  0.734722 → 0.733333 (-0.001389)' in serving
+    assert 'AU-PRO@0.05  0.132685 → 0.132769 (+0.000084)' in serving
     assert str(tmp_path) not in ''.join(p.read_text() for p in public.iterdir())
+
+
+def test_serving_evidence_svg_uses_supplied_measurements():
+    evidence = {
+        'baseline_latency_seconds': 4.0, 'candidate_latency_seconds': 3.0,
+        'image_auroc_baseline': .1, 'image_auroc_candidate': .2,
+        'au_pro_baseline': .3, 'au_pro_candidate': .4,
+        'parity_images': 7, 'outside_band_flips': 2,
+        'gpu_reserved_bytes': 2 * 1024 * 1024, 'image_digest': 'digest',
+    }
+    svg = serving_evidence_svg(evidence)
+    assert '4.0000 s/image → TensorRT FP32 3.0000 s/image' in svg
+    assert '25.0% 감소' in svg and '0.100000 → 0.200000 (+0.100000)' in svg
+    assert '검증 이미지 7장' in svg and '판정 flip: 2' in svg and '2.0 MiB' in svg
 
 def test_preview_metadata_binds_each_png(tmp_path):
     import numpy as np
