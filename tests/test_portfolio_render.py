@@ -96,3 +96,12 @@ def test_public_technical_docs_open_with_purpose_and_key_summary():
         text = (docs / name).read_text()
         assert '이 문서는' in text[:500], name
         assert text.index('## 핵심 요약') < text.index('\n## ', text.index('## 핵심 요약') + 1), name
+
+
+def test_paired_analysis_doc_explains_how_to_read_the_panel():
+    text = (Path(__file__).parents[1] / 'docs/PAIRED_RAWMAP_ANALYSIS.md').read_text()
+    for phrase in (
+        '검정색일수록 높은 이상 점수', 'E2-Split 우세 사례',
+        '거의 동일한 사례', 'SuperADD 우세 사례', '검증 정상 점수 분포',
+    ):
+        assert phrase in text
