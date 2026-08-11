@@ -1,17 +1,32 @@
-# 한계
+# 검증 범위와 한계
 
-- 동일 TESTpub 114개에 대한 단일 고정 비교는 일반화, 통계적 유의성, SOTA, 운영 최종 모델 선정을 증명하지 않습니다.
-- AU-PRO@0.05의 로컬 evaluator 기록은 MVTec AD 2 서버와의 동치나 미확정 comparator 동작을 증명하지 않습니다. 자세한 근거는 [`mvtec-metric-protocol.json`](../evidence/mvtec-metric-protocol.json)에 있습니다.
-- E2-Split은 legacy E2와 별도 검증 경로이지만, 실제 생산 결함·설비 변화·장기 drift에 대한 성능을 보장하지 않습니다.
-- SuperADD/DINOv3는 비교 연구 범위이며 Triton serving, export/parity, bank serialization은 검증되지 않았습니다.
-- 시각화는 raw-map 집계와 익명 raw-map·GT-mask 패널만 사용합니다. 원본 제조 이미지와 로컬 경로를 공개하지 않으므로 원자료 수준의 독립 재검토는 지원하지 않습니다.
+이 문서는 결과를 과장하지 않기 위해 **확인한 사실과 아직 확인하지 않은 범위**를 구분합니다.
 
-경계별 근거와 후속 검증 필요사항은 [결정 레지스터](../evidence/decision-register.yaml) 및 [paired raw-map 분석](PAIRED_RAWMAP_ANALYSIS.md)에 연결되어 있습니다.
+## 데이터와 성능 해석
 
-### SuperADD reconstruction boundary
+- 결과는 MVTec AD 2 Sheet-Metal TESTpub 114장에 대한 한 번의 고정 비교입니다. 통계적 유의성, SOTA, 다른 생산 라인으로의 일반화는 증명하지 않습니다.
+- TESTpub은 학습·보정·임계값 선택에 사용하지 않았습니다. 반대로 실제 생산 이미지, 조명 변화, 설비 drift, 장기 운영 데이터는 평가하지 않았습니다.
+- AU-PRO@0.05는 해시를 확인한 로컬 MVTec evaluator 결과입니다. MVTec AD 2 비공개 서버나 leaderboard 결과와의 완전한 동치는 주장하지 않습니다.
+- paired raw-map 분석은 결함 형상과 성능 차이의 연관성을 기술합니다. 특정 모델 구조가 차이의 원인이라고 증명하지 않습니다.
 
-The immutable FP32 comparison metrics remain the recorded comparison evidence. A validation-only supplement matched the train-bank SHA but not the recorded FP16 parity hash; FP16 is therefore **not admitted**. Validation-only resource values are available, while original TEST peak VRAM/host RSS remain unavailable; no resource or latency-superiority claim is supported.
+## 추론과 배포
 
+- EfficientAD TensorRT/Triton 결과는 FP32 변환, 대표 이미지 지연, 세 검증 이미지 parity와 TESTpub backend A/B까지 검증했습니다. 동시 요청 용량, 장시간 안정성, 장애 복구, 운영 SLA는 검증하지 않았습니다.
+- SuperADD는 DINOv3 ViT-S 직접 추론과 평가 파이프라인을 검증했습니다. DINOv3 export, TensorRT/Triton 특징 parity, 메모리 뱅크 직렬화는 구현·검증하지 않았습니다.
+- E2-Split과 SuperADD의 공개 지연은 측정 표본과 포함 단계가 달라 속도 우위를 비교할 수 없습니다.
 
+## SuperADD 정밀도·자원 증거
 
-Validation evidence index: [`3c6d1101332d44ee3c32942a0e92122d9ed46d611aebafde827a6775ae02ad1d`](../evidence/superadd-vits-validation-evidence-index-3c6d1101332d44ee3c32942a0e92122d9ed46d611aebafde827a6775ae02ad1d.json). It supersedes the unavailable-resource wording: validation-only resource values are available; original TEST peak VRAM/RSS remain unavailable; FP16 is not admitted.
+- 공개 FP32 비교 지표는 동결된 114개 원시 이상 맵과 평가 증거에 결속됩니다.
+- 검증 전용 재구성에서는 정상 메모리 뱅크 해시는 일치했지만 기록된 FP16 parity 해시는 재현되지 않았습니다. 따라서 FP16 경로는 채택하지 않았습니다.
+- 검증 전용 자원 측정값은 보존되어 있으나, 최초 TESTpub 실행의 최대 GPU VRAM과 host RSS는 남아 있지 않습니다. 이 자료로 자원 또는 지연 우위를 주장하지 않습니다.
+
+[SuperADD 검증 증거 인덱스](../evidence/superadd-vits-validation-evidence-index-3c6d1101332d44ee3c32942a0e92122d9ed46d611aebafde827a6775ae02ad1d.json)는 재구성 실패, 당시 진단, 검증 전용 자원 보충 자료를 해시로 연결합니다.
+
+## 공개 자료
+
+- 시각자료는 집계 지표와 익명 이상 맵·정답 마스크만 포함합니다. 원본 제조 이미지와 로컬 경로는 공개하지 않습니다.
+- 데이터셋과 DINOv3 가중치는 각 라이선스에 따라 사용자가 별도로 받아야 합니다.
+- 해시 결속은 기록된 파일의 무결성과 관계를 보여 주지만, 파일이 없는 환경에서 원자료를 복원해 주지는 않습니다.
+
+구현 구조는 [아키텍처](ARCHITECTURE.md), 평가 조건은 [평가 방법](EVALUATION.md), 재실행 조건은 [재현 방법](REPRODUCIBILITY.md)에서 확인할 수 있습니다.

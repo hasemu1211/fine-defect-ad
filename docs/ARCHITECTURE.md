@@ -1,9 +1,60 @@
 # 아키텍처
 
-이 포트폴리오는 하나의 운영 시스템 설계가 아니라, 동일한 공개 비교 경계에서 두 독립 구현을 검증한 기록입니다.
+이 문서는 FineDefect AD의 두 이상 탐지 파이프라인이 **어떤 입력을 받아 어떤 이상 맵을 만들고, 어디에서 같은 평가 규약으로 만나는지** 설명합니다.
 
-- **EfficientAD E2-Split + TensorRT/Triton**: 로컬 타일 residual과 전역 residual을 결합하는 고해상도 후보 경로입니다. legacy E2와 분리되어 있으며, 결정과 제한은 [sheet-metal 평가](SHEET_METAL_EVALUATION.md)에 있습니다.
-- **SuperADD/DINOv3**: pinned ViT-S 기반의 독립 비교 경로입니다. 현재 Triton serving 범위에는 포함되지 않습니다.
-- **공통 경계**: 익명 TESTpub ID, 528×2112 raw-map geometry, 해시 결속, 기록된 evaluator입니다. 이는 운영 최종 모델 선정이나 일반화 우열 판단이 아닙니다.
+## 전체 구조
 
-시스템 흐름과 serving 후보 근거는 [배포 후보 평가](DEPLOYMENT_EVALUATION.md), 비교의 원시 맵 재생 경계는 [paired raw-map 분석](PAIRED_RAWMAP_ANALYSIS.md), 결정별 근거는 [`evidence/decision-register.yaml`](../evidence/decision-register.yaml)을 참조합니다.
+두 파이프라인은 모델과 추론 방식은 다르지만 출력 이후의 비교 조건은 같습니다.
+
+```text
+MVTec AD 2 Sheet-Metal 이미지
+├─ EfficientAD: 고해상도 타일 + 전역 맵 → E2-Split 이상 맵
+└─ SuperADD: DINOv3 특징 + 정상 메모리 뱅크 → SuperADD 이상 맵
+                         ↓
+          528×2112 연속 이상 점수 맵
+                         ↓
+       동일 TESTpub 114장 · 동일 공식 평가기
+```
+
+- **이상 맵(anomaly map)**: 픽셀마다 이상 가능성을 연속 점수로 표현한 2차원 배열입니다.
+- **정상 메모리 뱅크**: 정상 이미지에서 추출한 특징 벡터의 대표 집합입니다.
+- **TESTpub**: MVTec AD 2가 공개한 시험 분할입니다. 이 프로젝트에서는 정상 24장과 불량 90장, 총 114장을 사용합니다.
+
+## EfficientAD E2-Split 고해상도 추론
+
+전체 이미지를 256×256으로 축소하는 기준선은 빠르지만 작은 결함 정보가 줄어들 수 있습니다. E2-Split은 같은 EfficientAD-S 체크포인트를 유지하면서 추론 구조만 바꿉니다.
+
+1. 원본 해상도에서 256×256 타일을 생성합니다.
+2. 각 타일에서 교사–학생 특징 차이로 **국소 이상 맵**을 계산합니다.
+3. 타일 겹침 영역을 Hann 가중치로 결합해 경계 이음새를 줄입니다.
+4. 전체 이미지를 표준 입력으로 본 오토인코더–학생 **전역 이상 맵**을 계산합니다.
+5. 검증 정상 이미지에서 동결한 분위수로 두 맵의 스케일을 맞추고 결합합니다.
+
+![고해상도 분할 추론과 TensorRT 실행 흐름](assets/system-architecture.svg)
+
+TensorRT/Triton 경로는 위 계산의 타일 모델 실행 부분을 FP32 TensorRT plan과 Triton HTTP binary 요청으로 바꿉니다. 타일 생성, 맵 결합, 평가 규약은 유지해 변환 전후 결과를 비교할 수 있게 했습니다.
+
+## SuperADD / DINOv3 경로
+
+SuperADD 경로는 DINOv3 ViT-S에서 정상 이미지 특징을 추출하고, 결정론적으로 축약한 정상 메모리 뱅크와 입력 특징의 거리를 이용해 이상 맵을 만듭니다.
+
+1. 고정된 정상 학습 이미지에서 DINOv3 특징을 추출합니다.
+2. 같은 seed와 설정으로 대표 특징을 선택해 메모리 뱅크를 만듭니다.
+3. 시험 이미지 특징과 메모리 뱅크의 거리를 계산합니다.
+4. 결과를 528×2112 연속 이상 맵으로 맞춰 동일 평가기에 전달합니다.
+
+이 경로는 Python 기반 직접 추론으로 검증했습니다. DINOv3 특징 추출과 메모리 뱅크를 TensorRT/Triton으로 옮기는 작업은 별도의 변환·수치 보존 계약이 필요하므로 현재 구현 범위에 포함하지 않았습니다.
+
+## 공통 평가·추적 경계
+
+비교가 모델 이름만 나열하는 표에 그치지 않도록 다음 항목을 고정했습니다.
+
+| 경계 | 적용 방식 |
+| --- | --- |
+| 입력 | 같은 TESTpub 114개 익명 ID와 원본 파일 해시 |
+| 출력 | 같은 528×2112, little-endian FP32 이상 맵 |
+| 평가 | 같은 MVTec 평가기와 Image AU-ROC/AU-PRO@0.05 |
+| 누수 방지 | TESTpub을 학습·보정·임계값 선택에 사용하지 않음 |
+| 추적성 | 체크포인트·가중치·입력·맵·결과를 SHA-256으로 연결 |
+
+세부 수치는 [평가 방법](EVALUATION.md), 실제 검증 명령은 [재현 방법](REPRODUCIBILITY.md), 결정 근거는 [결정 레지스터](../evidence/decision-register.yaml)에서 확인할 수 있습니다.

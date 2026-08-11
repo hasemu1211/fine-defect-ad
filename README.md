@@ -1,32 +1,56 @@
 # FineDefect AD
 
-**제조 sheet-metal 이상 탐지의 두 독립 파이프라인—EfficientAD E2-Split+TensorRT/Triton과 SuperADD/DINOv3—를 동일 TESTpub 114, 익명 ID, 528×2112 raw-map geometry, 공식 evaluator, SHA-256 결속으로 비교하는 재현 포트폴리오입니다.** 운영 배포·SOTA·최종 모델 선택·일반화 우열·임계값 기반 판정은 주장하지 않습니다.
+**고해상도 금속 표면 결함을 놓치지 않기 위한 추론 구조를 설계하고, 두 이상 탐지 파이프라인을 같은 공개 시험 데이터와 평가기로 재현·비교한 프로젝트입니다.**
 
-![독립 파이프라인 비교: raw-map 집계와 익명 raw-map·GT-mask 패널](docs/assets/candidate-comparison.svg)
+![동일 평가 조건에서 비교한 이상 탐지 결과](docs/assets/candidate-comparison.svg)
 
-## 독립 파이프라인과 비교 경계
+## 프로젝트 개요
 
-정상 이미지로만 bank/보정 경계를 고정하고, TESTpub은 한 번의 raw-map 평가에만 사용했습니다. 아래 수치는 재학습·TEST tuning·threshold 선택 없이 기록된 연속 점수의 Image AU-ROC/AU-PRO@0.05입니다. 지연은 서로 다른 evidence scope(단일 E2-Split 대표 이미지와 SuperADD 114장 inference 분포)라 직접 비교하거나 속도 우위로 해석하지 않습니다.
+MVTec AD 2 Sheet-Metal 이미지는 가로로 긴 고해상도 영상입니다. 전체 이미지를 256×256으로 축소하면 작은 결함의 위치 정보가 약해질 수 있습니다. 이 프로젝트는 다음 두 경로를 각각 구현하고, **같은 공개 시험 이미지 114장**, **같은 528×2112 이상 맵**, **같은 공식 평가기**로 결과를 비교합니다.
 
-| 경로 | Image AU-ROC | AU-PRO@0.05 | 지연 | 해석 |
-| --- | ---: | ---: | ---: | --- |
-| 256×256 기준선 | 0.595370 | 0.020582 | — | 동일 EfficientAD-S checkpoint의 기준 |
-| EfficientAD E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 대표 단일 고해상도 이미지 2.1040 s | 독립 구현/검증 경로 |
-| SuperADD ViT-S / DINOv3 direct/posthoc | **0.83935185** | **0.43140701** | **114장 inference: mean 1.1414 s, p50 1.0242 s/image** | 독립 비교 파이프라인 |
+- **E2-Split 고해상도 추론**: EfficientAD로 원본을 256×256 타일 처리한 국소 이상 맵과 전체 장면의 전역 이상 맵을 결합합니다.
+- **SuperADD / DINOv3 비교 경로**: 정상 이미지 특징을 메모리 뱅크로 구성하고 입력 특징과의 거리로 이상 영역을 찾습니다.
 
-## 구현·비교 체계
+여기서 **256×256 기준선**은 전체 이미지를 한 장의 256×256 입력으로 축소한 EfficientAD 경로입니다. **E2-Split**은 같은 EfficientAD 체크포인트를 다시 학습하지 않고 고해상도 분할 추론을 적용한 경로입니다.
 
-1. **EfficientAD E2-Split + TensorRT/Triton** — 고해상도 타일, TensorRT FP32 plan, Triton HTTP transport의 구현과 수치 보존을 기록합니다.
-2. **SuperADD/DINOv3** — pinned ViT-S, one-pass normal bank, FP32 및 posthoc 528×2112 evaluation geometry의 독립 비교 파이프라인입니다.
-3. **재현 비교 경계** — 두 결과는 동일 TESTpub 114, 익명화 ID, 528×2112 raw-map, 공식 evaluator, 해시 결속을 사용합니다. metric 차이는 이 고정 비교의 기록이며 SOTA·운영 최종선정·일반화 우열을 뜻하지 않습니다.
-4. **배포 범위** — SuperADD의 Triton 연결은 현재 비교 연구 범위 밖입니다. DINO export, feature/final-map parity, bank serialization은 별도 배포 검증이 필요합니다.
+## 핵심 성과
 
-![파이프라인 architecture / data flow](docs/assets/system-architecture.svg)
+| 구현·검증 항목 | 결과 | 확인한 역량 |
+| --- | --- | --- |
+| EfficientAD 고해상도 추론 | Image AU-ROC `0.595370 → 0.734722`, AU-PRO@0.05 `0.020582 → 0.132685` | 타일 분할, 국소·전역 맵 결합, 경계 가중 결합 |
+| TensorRT FP32 + Triton 서빙 | 대표 이미지 E2E `2.4610 → 2.1040초` (`-14.5%`) | 모델 변환, binary HTTP, 배치 추론, 수치 보존 검증 |
+| SuperADD / DINOv3 재현 | Image AU-ROC `0.839352`, AU-PRO@0.05 `0.431407` | 사전학습 특징 추출, 정상 메모리 뱅크, 독립 평가 파이프라인 |
+| 오류 특성 분석 | 동일 114장에 대한 익명 이상 맵·GT mask 쌍 분석 | 결함 면적·형상별 오차 패턴의 데이터 기반 기술 |
 
+TensorRT 전후 TESTpub 지표는 Image AU-ROC `0.734722 → 0.733333`, AU-PRO@0.05 `0.132685 → 0.132769`로 근접하게 유지됐습니다. 지연 수치는 EfficientAD 대표 이미지 측정이며, SuperADD의 114장 분포 측정과 직접 속도 비교하지 않습니다.
 
-## 공개 시각화 경계
+## 핵심 구현
 
-시각화는 원시 anomaly-map의 집계 수치와 익명 raw-map·GT-mask 패널만 사용합니다. 원본 제조 이미지, 로컬 경로, 식별 가능한 preview는 공개 자산에 포함하지 않습니다.
+1. **고해상도 분할 추론**
+   256×256 타일의 국소 교사–학생 잔차를 Hann 가중치로 이어 붙이고, 전체 장면을 본 오토인코더–학생 잔차와 동결된 분위수로 결합합니다.
+2. **재현 가능한 평가 체계**
+   체크포인트, 입력 목록, 원시 이상 맵, 평가 결과를 SHA-256으로 연결합니다. TESTpub은 학습·보정·임계값 선택에 사용하지 않습니다.
+3. **TensorRT/Triton 실행 경로**
+   FP32 TensorRT plan, Triton HTTP binary transport, 타일 배치 4, 최종 맵 parity와 TESTpub backend A/B를 검증했습니다.
+4. **독립 모델 비교와 오류 분석**
+   두 파이프라인의 동일 이미지 결과를 익명 ID로 연결해 픽셀 순위 성능과 결함 형상별 차이를 분석했습니다. 원본 제조 이미지는 공개하지 않습니다.
+
+## 시스템 아키텍처
+
+![고해상도 분할 추론과 TensorRT FP32 실행 흐름](docs/assets/system-architecture.svg)
+
+입력 이미지 → 타일 분할 → TensorRT FP32/Triton 추론 → 타일 결합 → 원시 이상 맵 → 평가 순서입니다. SuperADD는 동일 평가 규약을 사용하는 별도 Python 추론 경로이며, 현재 TensorRT/Triton 실행 경로에는 포함하지 않았습니다.
+
+## 평가 결과 읽는 법
+
+- **Image AU-ROC**: 이미지 한 장이 정상인지 이상인지 순위를 얼마나 잘 구분하는지 나타냅니다.
+- **AU-PRO@0.05**: 허용 오탐률 5% 구간에서 결함 영역을 얼마나 잘 찾는지 나타냅니다.
+- 모든 수치는 MVTec AD 2 Sheet-Metal 공개 시험 114장의 고정 원시 점수로 계산했습니다.
+- 이 결과는 재현 가능한 비교와 시스템 구현 증거이며 SOTA, 생산 배포 성능, 최종 모델 선정 또는 다른 데이터에 대한 일반화를 뜻하지 않습니다.
+
+![동일 이미지의 이상 맵 차이를 결함 면적 구간별로 집계](docs/assets/paired-rawmap-analysis.svg)
+
+상세 분석에는 실제 익명 이상 맵과 정답 마스크 패널도 포함합니다. [결함 형상별 분석 방법과 결과](docs/PAIRED_RAWMAP_ANALYSIS.md)
 
 ## 빠른 실행
 
@@ -39,31 +63,26 @@ PYTHONPATH=src python3 -m fine_defect_ad.highres_split infer --help
 PYTHONPATH=src python3 -m fine_defect_ad.tensorrt_promotion --help
 ```
 
-실제 실행에는 학습 체크포인트, 교사 가중치, TensorRT plan, 고정된 분할 동결 산출물, GPU lease 디렉터리가 필요합니다. 공개 CLI는 원시 맵과 검증 증거를 기록하며, 이 README는 운영 서비스 배포 절차를 제공하지 않습니다.
+실제 추론에는 별도로 허가받은 데이터셋, 모델 가중치, 학습 체크포인트와 GPU 환경이 필요합니다. 대용량 원시 맵과 모델 파일은 별도 아티팩트 저장소에 둡니다. 필요한 입력과 산출물은 [재현성 문서](docs/REPRODUCIBILITY.md)에 정리했습니다.
 
 ## 저장소 구조
 
 ```text
-src/fine_defect_ad/  학습, 고해상도 추론, TensorRT/Triton 후보 검증
-tests/               단위·통합 회귀 테스트
-docs/                공개 포트폴리오 문서와 도식
-evidence/            공개 가능한 평가 기준선·비교·입력 해시
+src/fine_defect_ad/  학습·고해상도 추론·평가·TensorRT/Triton 실행 코드
+tests/               파이프라인 계약과 증거 무결성 회귀 테스트
+docs/                아키텍처·평가·재현·한계와 시각자료
+evidence/            공개 가능한 결정·지표·해시 결속 증거
 ```
 
 ## 상세 문서
 
-- [아키텍처와 비교 경계](docs/ARCHITECTURE.md)
-- [평가 프로토콜과 지표 범위](docs/EVALUATION.md)
-- [재현성 범위와 검증 명령](docs/REPRODUCIBILITY.md)
-- [명시적 한계](docs/LIMITATIONS.md)
-- [배포 후보와 backend A/B 평가](docs/DEPLOYMENT_EVALUATION.md)
-- [고해상도 추론 평가와 한계](docs/SHEET_METAL_EVALUATION.md)
-- [기준선 평가](evidence/g002/baseline_evaluation.json)
-- [고해상도 경로 비교](evidence/g002/evaluation_comparison.json)
-- [라이선스와 출처](LICENSES.md)
-
-### 동결된 paired raw-map 분석
-
-동일 TESTpub114 ID와 528×2112 맵을 기준으로 threshold-independent tie-aware pixel ranking과 익명 raw-map·GT-mask 패널을 재생하는 기술적 분석입니다. 모델을 선택하거나 모델 구조가 성능 차이의 원인이라고 주장하지 않습니다. [방법과 한계](docs/PAIRED_RAWMAP_ANALYSIS.md)
-
-![동결된 paired raw-map 분석](docs/assets/paired-rawmap-analysis.svg)
+| 알고 싶은 내용 | 문서 |
+| --- | --- |
+| 두 파이프라인의 구성과 데이터 흐름 | [아키텍처](docs/ARCHITECTURE.md) |
+| 지표 정의, 비교 조건, 결과 해석 | [평가 방법](docs/EVALUATION.md) |
+| 환경 준비, 검증 명령, 산출물 확인 | [재현 방법](docs/REPRODUCIBILITY.md) |
+| 검증하지 않은 범위와 해석 주의점 | [한계](docs/LIMITATIONS.md) |
+| EfficientAD 학습·고해상도 추론 세부 | [Sheet-Metal 평가](docs/SHEET_METAL_EVALUATION.md) |
+| TensorRT/Triton 변환·성능·수치 보존 | [배포 백엔드 평가](docs/DEPLOYMENT_EVALUATION.md) |
+| 동일 이미지의 오류 특성 분석 | [Paired raw-map 분석](docs/PAIRED_RAWMAP_ANALYSIS.md) |
+| 외부 코드·모델의 출처와 라이선스 | [라이선스](LICENSES.md) |

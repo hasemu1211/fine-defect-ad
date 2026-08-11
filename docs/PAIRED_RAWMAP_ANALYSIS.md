@@ -1,13 +1,48 @@
-# Frozen paired raw-map analysis
+# 동일 이미지의 이상 맵 비교 분석
 
-The paired analysis replays only the same TESTpub114 E2-Split and posthoc SuperADD/DINOv3 raw maps with their ground-truth masks at 528×2112. It verifies map, source, and mask hashes before computing per-image tie-aware pixel AUROC, mask geometry descriptors, within-model score-rank deltas, descriptive quantile strata, and Spearman associations. It performs no inference, retraining, threshold selection, or test tuning.
+이 문서는 **같은 불량 이미지에서 EfficientAD E2-Split과 SuperADD가 어떤 위치를 다르게 강조했는지** 설명합니다. 전체 지표 표만으로 보이지 않는 오류 특성을 확인하기 위한 분석이며, 추론·재학습·임계값 조정은 수행하지 않습니다.
 
-Its findings are measured associations, not architecture-causality or model-selection claims. Raw score magnitudes are not compared across pipelines; image scores are rank-normalized within each pipeline. Visual panels contain anonymized raw-map + GT-mask representations—never source imagery or local paths.
+## 분석 입력
 
-Mask compactness uses the 4-connected digital perimeter: `4πA/P²`, where `P` counts exposed north/south/east/west pixel edges. Dataset-relative low/middle/high terciles include their exact cutpoints, counts, and mean paired pixel-AUROC deltas in the canonical evidence; they are descriptive only.
+- MVTec AD 2 Sheet-Metal TESTpub의 동일한 불량 이미지 90장
+- 파이프라인별 528×2112 FP32 이상 맵
+- 같은 이미지의 정답 결함 마스크
+- 익명 이미지 ID와 원본·마스크·이상 맵 SHA-256
 
-## 대표 raw-map 패널
+분석 전에 두 파이프라인의 이미지 순서, shape, dtype와 모든 해시를 다시 확인합니다. 원본 제조 이미지는 시각자료에 사용하지 않습니다.
 
-아래 패널은 동일한 익명 ID의 E2 heatmap, SuperADD heatmap, GT mask를 나란히 둔다. 원본 이미지는 포함하지 않는다. heatmap은 **각 이미지·파이프라인 내부** min–max 정규화(흰색=낮음, 검정=높음)라 절대 점수 크기를 비교하지 않으며, 표시한 paired pixel-AUROC delta는 SuperADD−E2이다.
+## 계산 방법
 
-![익명 raw-map + GT mask 패널](assets/paired-rawmap-panel.png)
+1. 이미지마다 이상 맵과 정답 마스크로 tie-aware pixel AU-ROC를 계산합니다.
+2. `SuperADD − E2-Split` 차이를 구해 어느 경로가 해당 이미지의 결함 픽셀을 더 잘 순위화했는지 기록합니다.
+3. 정답 마스크에서 결함 면적 비율, 테두리 접촉, 길쭉함, compactness를 계산합니다.
+4. 결함 면적 비율을 데이터셋 내부의 낮음·중간·높음 세 구간으로 나눠 평균 차이를 집계합니다.
+
+Compactness는 4방향 디지털 둘레 `P`와 면적 `A`를 이용한 `4πA/P²`입니다. 모든 구간은 이 데이터셋 내부의 기술 통계일 뿐 외부 임계값이 아닙니다.
+
+## 관측 결과
+
+![결함 면적 구간별 paired pixel AU-ROC 차이](assets/paired-rawmap-analysis.svg)
+
+| 결함 면적 구간 | 이미지 수 | 평균 pixel AU-ROC 차이(SuperADD−E2) |
+| --- | ---: | ---: |
+| 낮음 | 30 | +0.091 |
+| 중간 | 30 | +0.206 |
+| 높음 | 30 | +0.070 |
+
+세 구간 모두 평균 차이는 양수였고 중간 면적 구간에서 가장 컸습니다. Compactness와 성능 차이의 Spearman 순위 상관은 `-0.773`으로 관측됐습니다. 그러나 이 분석은 두 모델의 특징 표현을 직접 조작한 실험이 아니므로, 형상이 성능 차이의 원인이라고 단정하지 않습니다.
+
+## 대표 이상 맵 패널
+
+![익명 이상 맵과 정답 마스크 패널](assets/paired-rawmap-panel.png)
+
+각 행은 같은 익명 이미지의 E2-Split 이상 맵, SuperADD 이상 맵, 정답 마스크입니다. 이상 맵은 **각 이미지·파이프라인 내부에서 독립적으로 min–max 정규화**했으므로 흑백 밝기의 절대 크기를 모델 간 비교하면 안 됩니다. 패널의 수치는 해당 이미지의 `SuperADD−E2-Split` pixel AU-ROC 차이입니다.
+
+## 해석 한계
+
+- 결과는 불량 이미지 90장의 정답 마스크가 있는 영역에 한정됩니다.
+- 관측된 연관성은 인과관계, SOTA 또는 최종 모델 선택을 증명하지 않습니다.
+- 점수 크기는 파이프라인마다 척도가 달라 직접 비교하지 않고, 각 맵 내부의 순위만 사용합니다.
+- 원본 이미지가 공개되지 않으므로 패널은 결함 맥락이 아니라 위치화 차이를 보여 주는 자료입니다.
+
+전체 평가 규약과 집계 지표는 [평가 방법](EVALUATION.md), 데이터 공개 범위는 [한계](LIMITATIONS.md)에 있습니다.

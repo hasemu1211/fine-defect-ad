@@ -58,12 +58,24 @@ def test_preview_metadata_binds_each_png(tmp_path):
 def test_candidate_comparison_keeps_latency_scopes_separate():
     svg = (Path(__file__).parents[1] / 'docs/assets/candidate-comparison.svg').read_text()
     assert '직접 비교 불가' in svg
-    assert '동일 TESTpub 114' in svg
+    assert 'MVTec AD 2 Sheet-Metal 공개 시험 114장' in svg
+    assert '동일 평가 조건: 528×2112 맵 · 공식 평가기' in svg
+    assert 'raw-map aggregation' not in svg
     assert 'width="640"' in svg
     assert min(map(int, re.findall(r'font-size:(\d+)px', svg))) >= 16
+
+
+def test_readme_explains_public_terms_before_using_internal_names():
+    readme = (Path(__file__).parents[1] / 'README.md').read_text()
+    assert '## 핵심 성과' in readme
+    assert '**256×256 기준선**' in readme
+    assert '**E2-Split 고해상도 추론**' in readme
+    assert '공개 시험 이미지 114장' in readme
+    assert 'raw-map aggregation' not in readme
 
 
 def test_readme_svg_source_fonts_stay_mobile_legible():
     assets=Path(__file__).parents[1]/'docs/assets'
     for name in ('geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg'):
         text=(assets/name).read_text(); sizes=list(map(int,re.findall(r'font-size:(\d+)px',text))); assert min(sizes)>=15
+    assert '같은 TESTpub 불량 90장' in (assets/'paired-rawmap-analysis.svg').read_text()

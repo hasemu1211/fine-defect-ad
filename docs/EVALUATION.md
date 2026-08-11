@@ -1,12 +1,60 @@
-# 평가
+# 평가 방법과 결과
 
-공개 비교는 동일 TESTpub 114개 익명 ID의 연속 raw anomaly map을 한 번 평가한 기록입니다. 재학습, TEST tuning, threshold 기반 판정, 운영 모델 선택은 포함하지 않습니다.
+이 문서는 **무엇을 같은 조건으로 비교했고, 각 지표와 수치를 어떻게 해석해야 하는지** 설명합니다. 모델 학습법과 실행 구조는 각각 [Sheet-Metal 평가](SHEET_METAL_EVALUATION.md)와 [아키텍처](ARCHITECTURE.md)에 분리했습니다.
 
-- 지표: Image AU-ROC와 AU-PRO@0.05. 로컬 evaluator의 출처·미확인 범위는 [`mvtec-metric-protocol.json`](../evidence/mvtec-metric-protocol.json)에 기록됩니다.
-- 고해상도 경로·legacy E2와 E2-Split의 구분: [sheet-metal 평가](SHEET_METAL_EVALUATION.md)
-- 동결 raw-map의 tie-aware pixel ranking 분석과 한계: [paired raw-map 분석](PAIRED_RAWMAP_ANALYSIS.md)
-- 수치 산출물: [기준선](../evidence/g002/baseline_evaluation.json), [경로 비교](../evidence/g002/evaluation_comparison.json)
+## 평가 데이터와 누수 방지
 
-서로 다른 evidence scope의 지연 수치는 속도 우위로 해석하지 않습니다.
+- 데이터: MVTec AD 2 Sheet-Metal TESTpub 114장(정상 24, 불량 90)
+- 출력 형식: 파이프라인별 528×2112 연속 이상 점수 맵
+- 평가기: 해시를 확인한 MVTec AD evaluator
+- 금지 항목: TESTpub을 이용한 재학습, 보정, 임계값 선택, 모델 선택
+- 추적 방법: 익명 이미지 ID, 원본·정답 마스크·이상 맵 SHA-256 결속
 
-- SuperADD validation evidence index: [final evidence index](../evidence/superadd-vits-validation-evidence-index-3c6d1101332d44ee3c32942a0e92122d9ed46d611aebafde827a6775ae02ad1d.json)
+따라서 아래 결과는 같은 시험 입력에 대한 **고정된 사후 평가**입니다. 운영 임계값을 정하거나 특정 모델을 최종 선택하는 실험이 아닙니다.
+
+## 지표
+
+### Image AU-ROC
+
+각 이미지의 이상 맵 최대값을 이미지 점수로 사용합니다. 정상과 불량 이미지의 순서를 얼마나 잘 구분하는지 0~1로 나타내며, 값이 클수록 좋습니다. 결함 위치가 정확한지는 이 지표만으로 알 수 없습니다.
+
+### AU-PRO@0.05
+
+정답 결함 영역과 예측 이상 맵의 겹침을 측정하되, 이미지 전체 오탐률이 5% 이하인 구간을 적분합니다. 작은 결함을 어디에서 찾았는지 보는 위치화 지표이며, 값이 클수록 좋습니다.
+
+## 결과
+
+| 파이프라인 | Image AU-ROC | AU-PRO@0.05 | 비교 목적 |
+| --- | ---: | ---: | --- |
+| EfficientAD 256×256 기준선 | 0.595370 | 0.020582 | 전체 축소 입력의 기준값 |
+| EfficientAD E2-Split | 0.734722 | 0.132685 | 같은 체크포인트의 고해상도 추론 효과 확인 |
+| E2-Split + TensorRT/Triton | 0.733333 | 0.132769 | 실행 백엔드 변환 후 수치 보존 확인 |
+| SuperADD / DINOv3 ViT-S | 0.839352 | 0.431407 | 다른 특징 표현·메모리 뱅크 방식의 독립 재현 |
+
+E2-Split은 모델을 다시 학습하지 않고 입력의 공간 정보를 보존하는 추론 구조로 기준선보다 높은 두 지표를 기록했습니다. TensorRT/Triton 변환 전후의 작은 차이는 backend A/B 결과로 기록했으며, 변환이 모델 정확도를 개선했다는 의미가 아닙니다. SuperADD 결과는 같은 데이터와 평가기에서 재현한 독립 파이프라인 결과입니다.
+
+## 같은 이미지에서 본 오류 특성
+
+집계 지표만으로는 두 방식이 **어떤 결함에서 다르게 반응했는지** 알 수 없습니다. 그래서 동일한 불량 이미지 90장의 이상 맵과 정답 마스크를 짝지어 다음을 계산했습니다.
+
+- 이미지별 tie-aware pixel AU-ROC 차이
+- 결함 면적 비율, 테두리 접촉 여부, 길쭉함, compactness
+- 결함 면적 구간별 평균 성능 차이와 형상 지표의 순위 상관
+
+결함 면적 중간 구간에서 SuperADD−E2의 평균 pixel AU-ROC 차이가 `+0.206`으로 가장 크게 관측됐습니다. 이 값은 관측된 오류 패턴을 설명하기 위한 기술 통계이며, 모델 구조가 원인임을 증명하거나 모델을 선택하는 기준은 아닙니다. 실제 익명 이상 맵·정답 마스크 패널과 계산법은 [paired raw-map 분석](PAIRED_RAWMAP_ANALYSIS.md)에 있습니다.
+
+## 지연 결과의 범위
+
+- E2-Split TensorRT/Triton: 대표 고해상도 이미지 한 장의 E2E `2.1040초`
+- SuperADD: TESTpub 114장 직접 추론 분포의 평균 `1.1414초`, 중앙값 `1.0242초/장`
+
+측정 표본과 포함 단계가 다르므로 두 값을 속도 순위로 비교하지 않습니다. TensorRT/Triton 내부 A/B와 측정 조건은 [배포 백엔드 평가](DEPLOYMENT_EVALUATION.md)에 있습니다.
+
+## 근거 파일
+
+- [256×256 기준선 평가](../evidence/g002/baseline_evaluation.json)
+- [EfficientAD 경로 비교](../evidence/g002/evaluation_comparison.json)
+- [MVTec 지표 프로토콜](../evidence/mvtec-metric-protocol.json)
+- [SuperADD 검증 증거 인덱스](../evidence/superadd-vits-validation-evidence-index-3c6d1101332d44ee3c32942a0e92122d9ed46d611aebafde827a6775ae02ad1d.json)
+
+평가기의 서버 동치, 통계적 유의성, 생산 환경 일반화 등 증거가 없는 범위는 [한계](LIMITATIONS.md)에 명시했습니다.

@@ -1,10 +1,16 @@
 # TensorRT FP32 · Triton 후보 백엔드 평가
 
+이 문서는 **EfficientAD E2-Split의 모델 계산을 TensorRT FP32와 Triton으로 옮겼을 때 지연이 줄고 이상 맵 성능이 유지되는지** 검증한 방법과 결과를 설명합니다.
+
+- **Backend A/B**: 같은 모델·입력·후처리를 유지하고 실행 엔진만 바꾼 비교입니다.
+- **E2E 지연**: 타일 생성부터 모델 호출, 맵 결합까지 한 이미지 처리에 걸린 시간입니다.
+- **Parity**: 변환 전후 최종 이상 맵의 수치·판정 일치 여부입니다.
+
 ## 결론
 
 고해상도 분할 추론을 **TensorRT FP32 plan + Triton**으로 실행하는 후보 백엔드를 검증했다. 같은 EfficientAD-S Small 체크포인트와 고정된 분할 동결 산출물을 사용한 backend A/B에서, 대표 단일 이미지 E2E 지연은 TorchScript B4의 **2.4610 s/image**에서 TensorRT FP32/Triton의 **2.1040 s/image**로 **14.5% 감소**했다.
 
-고정된 TESTpub 114-image 평가에서는 Image AU-ROC가 `0.734722 → 0.733333` (`-0.001389`), AU-PRO@0.05가 `0.132685 → 0.132769` (`+0.000084`)였다. 이 문서는 후보 백엔드의 수치 보존과 추적성을 기록한다. production promotion, 실시간 처리량, 운영 SLA의 근거는 아니다.
+고정된 TESTpub 114장 평가에서는 Image AU-ROC가 `0.734722 → 0.733333` (`-0.001389`), AU-PRO@0.05가 `0.132685 → 0.132769` (`+0.000084`)였습니다. 이 문서는 후보 백엔드의 수치 보존과 추적성을 기록합니다. 생산 배포 승인, 실시간 처리량, 운영 SLA의 근거는 아닙니다.
 
 ![TensorRT FP32 + Triton 측정 요약](assets/serving-evidence.svg)
 
@@ -16,7 +22,7 @@
 | 추론 | 고해상도 분할 추론, 256×256 타일, Hann stitch, 동결 분위수 |
 | 기준 backend | TorchScript B4 |
 | 후보 backend | TensorRT FP32 plan, Triton HTTP binary transport |
-| 평가 입력 | TESTpub 114 images (정상 24 / 불량 90) |
+| 평가 입력 | TESTpub 114장(정상 24 / 불량 90) |
 | A/B 규칙 | 같은 체크포인트·입력·분할 동결 산출물, 재보정·튜닝·모델 선택 없음 |
 | 컨테이너 | `nvcr.io/nvidia/tritonserver:26.06-py3@sha256:a40838bb4587d2aceb46b1e7fd144afb24c9016c219dd3eba31716e4e28dbfc7` |
 
@@ -36,7 +42,7 @@
 | 측정 | TorchScript B4 | TensorRT FP32 + Triton | 변화 |
 | --- | ---: | ---: | ---: |
 | 대표 고해상도 E2E | 2.4610 s/image | 2.1040 s/image | -14.5% |
-| TESTpub evaluator/persistence | 별도 기록 | 114 images, 총 283.6581 s | 대표 지연과 비교 불가 |
+| TESTpub 평가·저장 | 별도 기록 | 114장, 총 283.6581 s | 대표 지연과 비교 불가 |
 
 대표 E2E 값은 고정된 한 고해상도 이미지에서 tile 분할, backend 호출, stitch·결합까지의 한 경로를 측정한 값이다. 114-image 총 시간은 원시 맵 persistence와 evaluator 실행을 포함하는 별도 측정이다. 따라서 아래 주장은 하지 않는다.
 

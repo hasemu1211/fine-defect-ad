@@ -1,1 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="570" viewBox="0 0 640 570"><style>text{font-family:system-ui,sans-serif;fill:#172033}.t{font-size:22px;font-weight:700}.s{font-size:17px;fill:#526070}.n{font-size:16px;fill:#526070}</style><rect width="640" height="570" fill="#f8fafc"/><text x="24" y="40" class="t">독립 파이프라인 재현 비교</text><text x="24" y="68" class="s">raw-map aggregation + anonymized raw-map+GT-mask · no source images · 동일 TESTpub 114 · 익명 ID</text><text x="24" y="94" class="s">528×2112 · 공식 evaluator · SHA-256 결속</text><text x="24" y="140" class="t">Image AU-ROC</text><text x="24" y="170" class="s">256 baseline — 0.595370</text><rect x="24" y="180" width="330" height="22" fill="#cbd5e1"/><text x="24" y="234" class="s">E2-Split TRT — 0.733333</text><rect x="24" y="244" width="406" height="22" fill="#60a5fa"/><text x="24" y="298" class="s">SuperADD ViT-S — 0.83935185</text><rect x="24" y="308" width="465" height="22" fill="#16a34a"/><text x="24" y="382" class="t">지연 증거 · 서로 다른 측정 scope</text><text x="24" y="412" class="s">E2-Split TRT: 대표 고해상도 이미지 2.1040 s</text><text x="24" y="440" class="s">SuperADD: 114장 mean 1.1414 s · p50 1.0242 s</text><text x="24" y="484" class="n">지연 scope는 직접 비교 불가.</text><text x="24" y="512" class="n">SuperADD Triton은 현재 범위 밖.</text><text x="24" y="540" class="n">별도 export/parity/bank 배포 검증이 필요.</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="690" viewBox="0 0 640 690">
+  <style>text{font-family:system-ui,sans-serif;fill:#172033}.t{font-size:22px;font-weight:700}.s{font-size:17px;fill:#526070}.n{font-size:16px;fill:#526070}.v{font-size:16px;font-weight:700;fill:#172033}</style>
+  <rect width="640" height="690" fill="#f8fafc"/>
+  <text x="24" y="40" class="t">같은 데이터에서 확인한 이상 탐지 결과</text>
+  <text x="24" y="70" class="s">MVTec AD 2 Sheet-Metal 공개 시험 114장</text>
+  <text x="24" y="98" class="s">동일 평가 조건: 528×2112 맵 · 공식 평가기</text>
+
+  <text x="24" y="150" class="t">이미지 단위 이상 구분 · Image AU-ROC</text>
+  <text x="24" y="184" class="s">256×256 기준선</text><text x="600" y="184" text-anchor="end" class="v">0.595370</text>
+  <rect x="24" y="196" width="357" height="22" rx="3" fill="#cbd5e1"/>
+  <text x="24" y="250" class="s">E2-Split 고해상도 추론 + TensorRT</text><text x="600" y="250" text-anchor="end" class="v">0.733333</text>
+  <rect x="24" y="262" width="440" height="22" rx="3" fill="#60a5fa"/>
+  <text x="24" y="316" class="s">SuperADD / DINOv3 ViT-S</text><text x="600" y="316" text-anchor="end" class="v">0.839352</text>
+  <rect x="24" y="328" width="504" height="22" rx="3" fill="#16a34a"/>
+
+  <text x="24" y="406" class="t">결함 영역 위치화 · AU-PRO@0.05</text>
+  <text x="24" y="440" class="s">256×256 기준선</text><text x="600" y="440" text-anchor="end" class="v">0.020582</text>
+  <rect x="24" y="452" width="12" height="22" rx="3" fill="#cbd5e1"/>
+  <text x="24" y="506" class="s">E2-Split 고해상도 추론 + TensorRT</text><text x="600" y="506" text-anchor="end" class="v">0.132769</text>
+  <rect x="24" y="518" width="80" height="22" rx="3" fill="#60a5fa"/>
+  <text x="24" y="572" class="s">SuperADD / DINOv3 ViT-S</text><text x="600" y="572" text-anchor="end" class="v">0.431407</text>
+  <rect x="24" y="584" width="259" height="22" rx="3" fill="#16a34a"/>
+
+  <text x="24" y="646" class="n">연속 원시 점수 평가 · TEST 학습/보정 없음</text>
+  <text x="24" y="674" class="n">지연은 측정 범위가 달라 직접 비교 불가</text>
+</svg>
