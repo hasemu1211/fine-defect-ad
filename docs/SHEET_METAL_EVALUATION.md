@@ -1,6 +1,13 @@
-# Sheet-metal 결함 평가
+# EfficientAD 고해상도 추론 평가
 
 이 문서는 **EfficientAD-S 학습 산출물, 256×256 기준선, E2-Split 고해상도 추론의 평가와 재현 절차**를 한곳에 정리합니다. SuperADD 비교 방법은 [평가 방법](EVALUATION.md)에 분리했습니다.
+
+## 핵심 요약
+
+- EfficientAD-S를 70,000 step 학습한 하나의 체크포인트를 모든 EfficientAD 평가에 사용했습니다.
+- 전체 이미지를 256×256로 축소한 기준선보다, 국소 타일 맵과 전역 맵을 결합한 E2-Split에서 Image AU-ROC가 `0.595370 → 0.734722`, AU-PRO@0.05가 `0.020582 → 0.132685`로 높아졌습니다.
+- 성능 변화는 **모델 재학습이 아니라 추론 파이프라인 변경**에서 발생했습니다.
+- 이전 타일링 프로토타입의 경계 실패와 현재 E2-Split은 서로 다른 구현입니다.
 
 | 용어 | 뜻 |
 | --- | --- |
@@ -11,11 +18,11 @@
 
 공개 재현 명령은 이해하기 쉬운 도메인 이름 wrapper를 사용합니다. 과거 증거 파일명과 내부 단계 ID는 이미 기록된 해시를 보존하기 위해 변경하지 않습니다.
 
-## 범위
+## 이 문서가 다루는 범위
 
-이 문서는 EfficientAD-S Small의 학습 산출물과 **E2-Split — 고해상도 분할 추론**의 검증·TESTpub 평가를 기록합니다. E1 — 256×256 기준 추론은 같은 체크포인트의 비교 기준선이며, 이전 전체 분기 타일링 경로(legacy E2)는 별도 개선 이력으로 분리합니다. 최종 성능 평가나 운영 배포 판정 문서가 아닙니다.
+이 문서는 EfficientAD-S Small의 학습 산출물과 **E2-Split — 고해상도 분할 추론**의 검증·TESTpub 평가를 기록합니다. E1 — 256×256 기준 추론은 같은 체크포인트의 비교 기준선이며, 이전 전체 분기 타일링 경로(legacy E2)는 별도 개선 이력으로 분리합니다. 운영 배포 검증은 [TensorRT FP32 · Triton 실행 경로 검증](DEPLOYMENT_EVALUATION.md)에 있습니다.
 
-## 핵심 지표
+## 학습과 평가 결과
 
 | 구분 | 결과 | 근거/상태 |
 | --- | --- | --- |
@@ -31,7 +38,7 @@
 
 Image AU-ROC는 동일 TESTpub 매니페스트의 `good`/`bad` 라벨과 각 이미지의 **최종 원시 맵 최대값**을 사용한 tie-aware 순위 지표입니다. AU-PRO@0.05는 픽셀 위치화 지표로 유지합니다. [EfficientAD 논문](https://openaccess.thecvf.com/content/WACV2024/html/Batzner_EfficientAD_Accurate_Visual_Anomaly_Detection_at_Millisecond-Level_Latencies_WACV_2024_paper.html)도 이미지 단위 detection AU-ROC와 위치화 성능을 분리해 보고합니다.
 
-## E1 기준선 보정
+## 256×256 기준선 보정
 
 E1은 E2-Split의 동일 체크포인트 비교 기준선입니다. 아래 수치는 E1 전용 보정·원시 맵 증거이며, E2-Split의 후보 구성이나 분위수에 사용하지 않았습니다.
 
@@ -43,7 +50,7 @@ E1은 E2-Split의 동일 체크포인트 비교 기준선입니다. 아래 수�
 | 평균 / 모집단 표준편차 | 0.07112031954392078 / 0.04543306480528533 | 검증 전용 점수 |
 | 원시 임계값 | 0.20741951395977676 | `mean + 3 × population std` |
 
-## 증거와 추적성
+## 결과를 동일 실행에 연결하는 방법
 
 선택된 체크포인트, sidecar, 학습 이력, 최종 실행, 학습 식별자는 SHA-256으로 결속됩니다. 검증 런타임은 동일한 런 ID와 이 입력 결속을 확인한 뒤 원시 맵·매니페스트·실행 증거를 기록합니다.
 
@@ -53,7 +60,7 @@ E1 TESTpub은 256×256 기준 경로에서 원시 맵만 추출했고, 해당 �
 
 [MVTec AD 2 Code Utils](https://www.mvtec.com/research-teaching/datasets/mvtec-ad-2)는 정량적 TESTpub AU-PRO를 [MVTec AD evaluator v1.0](https://www.mvtec.com/research-teaching/datasets/mvtec-ad)으로 평가하도록 안내합니다. evaluator archive SHA-256 `dfcda7d67eee25316ec6ae5042c0b1684a4cabf33b2346be351e2ce36013f220`를 검증한 뒤 고정된 원시 맵을 평가했습니다.
 
-## 최초 평가 추적
+## 평가 산출물
 
 - [기준선 평가](../evidence/g002/baseline_evaluation.json): 최초 256×256 기준선 지표와 입력 증거 해시
 - [평가 비교](../evidence/g002/evaluation_comparison.json): 동일 체크포인트에서 파이프라인 변경 전후의 절대·상대 변화
@@ -61,13 +68,13 @@ E1 TESTpub은 256×256 기준 경로에서 원시 맵만 추출했고, 해당 �
 
 FP/FN은 동결된 판정 임계값이 없으므로 계산하지 않습니다. 오류 사례 파일은 모델 판정 결과가 아니라 후속 분석 우선순위입니다.
 
-## 이전 전체 분기 경로의 개선 이력
+## 채택하지 않은 초기 타일링 경로
 
 `DEC-GEO-002`의 전체 분기 타일링 경로(legacy `E2`)는 초기 border 16 px, 재시도 설정 80 px, 관측 border 60 px를 기록했습니다. `REVISION_UNSTABLE_RETAIN_E1` 상태에서 경계·시임 응답을 계층적 비가중 규칙으로 검사한 결과, 이 프로토타입은 시임·원점 안정성 기준을 만족하지 못했습니다. 당시 256×256 경로를 유지한 것은 성능 우위 주장이 아니라 해당 프로토타입의 경계 처리 안정성 결정입니다.
 
 **E2-Split**은 이 전체 분기 프로토타입을 구조적으로 분리한 별도 `DEC-SPLIT-003` 경로입니다. E2-Split은 검증 정상 이미지 19장으로 입력 해시·타일 기하·국소/전역 잔차 분위수를 동결했으며, `READY`는 이 독립 검증의 통과를 뜻합니다. 따라서 legacy E2의 시임·원점 실패를 E2-Split의 실패로 해석하지 않습니다.
 
-## 한계
+## 결과를 해석할 때 주의할 점
 
 - TESTpub은 학습·보정에 사용하지 않았고, Image AU-ROC와 local AU-PRO@0.05는 고정된 평가 산출 체인으로만 기록했습니다.
 - local AU-PRO@0.05 `0.13268484492898858`은 낮은 수치입니다. 재현 가능한 파이프라인과 평가 입력 결속의 증거이지 모델 성능의 강점으로 해석하지 않습니다.
@@ -75,7 +82,7 @@ FP/FN은 동결된 판정 임계값이 없으므로 계산하지 않습니다. �
 - 256×256 기준 경로 보정 입력은 paired probe 맵과 canonical 맵이 바이트 단위로 동일하지 않은 수치 전처리 변형을 포함합니다. 관측된 최대 입력 차이는 `1.1920929e-7`이며, 해당 차이는 공개 성능 주장으로 해석하지 않습니다.
 - 공개 SVG는 집계 수치와 구조만 보여 줍니다. 실제 데이터셋 기반 미리보기는 재배포 권한 확인 전까지 로컬 증거로 유지합니다.
 
-## 재현
+## 재현 방법
 
 아래 변수는 일반화된 저장 위치를 사용합니다. 명령은 실제 CLI 인자와 일치하며, GPU가 사용 가능한 Python 환경에서 실행해야 합니다.
 
@@ -114,7 +121,7 @@ export GEOMETRY_EVIDENCE_SHA256="$(sha256sum "$GEOMETRY_EVIDENCE" | awk '{print 
 export GEOMETRY_DECISION_ID=DEC-GEO-002
 ```
 
-### E2-Split 단일 이미지 원시 맵 추론
+### 단일 이미지에서 E2-Split 실행
 
 공개 기본 경로는 아래 `infer`입니다. 입력 이미지는 복사하지 않고 E2-Split 원시 이상 맵, 표시 전용 min/max heatmap PNG, 해시 결속 매니페스트만 기록합니다. 기본 `--repeat 2` smoke는 모델 로드·decode를 제외한 맵 계산 지연, 반복 해시 일치, CUDA peak와 타일 coverage를 기록합니다. 임계값·합격/불합격 판정은 생성하지 않으며, 데이터셋 루트 아래의 검증·TESTpub 입력은 거부합니다.
 
@@ -127,7 +134,7 @@ PYTHONPATH=src python3 -m fine_defect_ad.highres_split infer \
   --run-id "$RUN_ID" --input-image /path/to/inspection.png --split-freeze "$PRETEST_FREEZE"
 ```
 
-### E2-Split 검증 동결
+### 검증 정상 이미지로 결합 기준 고정
 
 다음은 공개 포트폴리오의 주된 재현 경로입니다. 검증 정상 이미지 19장으로 E2-Split 입력·타일 기하·분위수를 동결하며, TESTpub one-shot 평가는 수행하지 않습니다.
 
@@ -142,7 +149,7 @@ PYTHONPATH=src python3 -m fine_defect_ad.highres_split validation \
 
 실패하면 아티팩트 루트에 `highres-split-FAILED-<run-id>-<digest>.json`이 기록됩니다. 이 JSON은 예외 유형, 예외 지문 SHA-256, 입력 파일 해시, Git 커밋을 기록하고 예외 본문·로컬 경로는 포함하지 않습니다. 원래 예외는 변경 없이 다시 발생합니다.
 
-### E1 기준선과 legacy E2 이력
+### 기준선과 초기 프로토타입 재현
 
 아래 명령은 E2-Split의 비교 기준선과 이전 전체 분기 프로토타입을 재현하기 위한 보조 경로입니다.
 

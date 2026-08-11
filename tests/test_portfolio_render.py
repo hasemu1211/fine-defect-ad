@@ -67,7 +67,11 @@ def test_candidate_comparison_keeps_latency_scopes_separate():
 
 def test_readme_explains_public_terms_before_using_internal_names():
     readme = (Path(__file__).parents[1] / 'README.md').read_text()
-    assert '## 핵심 성과' in readme
+    assert '## 이 프로젝트에서 확인한 것' in readme
+    assert '## 실험 결과와 의미' in readme
+    assert '## 모델별 오류 차이' in readme
+    assert '공간 정보 손실' in readme
+    assert '배포 최적화' in readme
     assert '**256×256 기준선**' in readme
     assert '**E2-Split 고해상도 추론**' in readme
     assert '공개 시험 이미지 114장' in readme
@@ -79,3 +83,16 @@ def test_readme_svg_source_fonts_stay_mobile_legible():
     for name in ('geometry-selection.svg','serving-evidence.svg','system-architecture.svg','training-curve.svg'):
         text=(assets/name).read_text(); sizes=list(map(int,re.findall(r'font-size:(\d+)px',text))); assert min(sizes)>=15
     assert '같은 TESTpub 불량 90장' in (assets/'paired-rawmap-analysis.svg').read_text()
+
+
+def test_public_technical_docs_open_with_purpose_and_key_summary():
+    docs = Path(__file__).parents[1] / 'docs'
+    names = (
+        'ARCHITECTURE.md', 'DEPLOYMENT_EVALUATION.md', 'EVALUATION.md',
+        'LIMITATIONS.md', 'PAIRED_RAWMAP_ANALYSIS.md', 'REPRODUCIBILITY.md',
+        'SHEET_METAL_EVALUATION.md',
+    )
+    for name in names:
+        text = (docs / name).read_text()
+        assert '이 문서는' in text[:500], name
+        assert text.index('## 핵심 요약') < text.index('\n## ', text.index('## 핵심 요약') + 1), name

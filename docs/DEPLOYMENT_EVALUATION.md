@@ -1,4 +1,4 @@
-# TensorRT FP32 · Triton 후보 백엔드 평가
+# TensorRT FP32 · Triton 실행 경로 검증
 
 이 문서는 **EfficientAD E2-Split의 모델 계산을 TensorRT FP32와 Triton으로 옮겼을 때 지연이 줄고 이상 맵 성능이 유지되는지** 검증한 방법과 결과를 설명합니다.
 
@@ -6,15 +6,15 @@
 - **E2E 지연**: 타일 생성부터 모델 호출, 맵 결합까지 한 이미지 처리에 걸린 시간입니다.
 - **Parity**: 변환 전후 최종 이상 맵의 수치·판정 일치 여부입니다.
 
-## 결론
+## 핵심 요약
 
-고해상도 분할 추론을 **TensorRT FP32 plan + Triton**으로 실행하는 후보 백엔드를 검증했다. 같은 EfficientAD-S Small 체크포인트와 고정된 분할 동결 산출물을 사용한 backend A/B에서, 대표 단일 이미지 E2E 지연은 TorchScript B4의 **2.4610 s/image**에서 TensorRT FP32/Triton의 **2.1040 s/image**로 **14.5% 감소**했다.
+고해상도 분할 추론을 **TensorRT FP32 plan + Triton**으로 실행하는 백엔드를 검증했습니다. 같은 EfficientAD-S Small 체크포인트와 같은 후처리를 사용한 A/B에서 대표 단일 이미지 E2E 지연은 TorchScript B4의 **2.4610초**에서 **2.1040초**로 **14.5% 감소**했습니다.
 
-고정된 TESTpub 114장 평가에서는 Image AU-ROC가 `0.734722 → 0.733333` (`-0.001389`), AU-PRO@0.05가 `0.132685 → 0.132769` (`+0.000084`)였습니다. 이 문서는 후보 백엔드의 수치 보존과 추적성을 기록합니다. 생산 배포 승인, 실시간 처리량, 운영 SLA의 근거는 아닙니다.
+고정된 TESTpub 114장 평가에서는 Image AU-ROC가 `0.734722 → 0.733333` (`-0.001389`), AU-PRO@0.05가 `0.132685 → 0.132769` (`+0.000084`)였습니다. 검증 범위는 백엔드 변환의 수치 보존과 대표 이미지 지연입니다. 생산 배포, 동시 처리량, 운영 SLA에는 별도 검증이 필요합니다.
 
 ![TensorRT FP32 + Triton 측정 요약](assets/serving-evidence.svg)
 
-## 범위와 고정 조건
+## 비교 조건
 
 | 구분 | 고정 조건 |
 | --- | --- |
@@ -23,10 +23,10 @@
 | 기준 backend | TorchScript B4 |
 | 후보 backend | TensorRT FP32 plan, Triton HTTP binary transport |
 | 평가 입력 | TESTpub 114장(정상 24 / 불량 90) |
-| A/B 규칙 | 같은 체크포인트·입력·분할 동결 산출물, 재보정·튜닝·모델 선택 없음 |
+| A/B 규칙 | 같은 체크포인트·입력·분할 동결 산출물, 재보정·TEST 튜닝 없이 실행 |
 | 컨테이너 | `nvcr.io/nvidia/tritonserver:26.06-py3@sha256:a40838bb4587d2aceb46b1e7fd144afb24c9016c219dd3eba31716e4e28dbfc7` |
 
-## 실행 경로
+## 추론 흐름
 
 ![고해상도 분할 추론과 TensorRT FP32 서빙](assets/system-architecture.svg)
 
@@ -35,9 +35,9 @@
 3. 타일별 국소 맵을 Hann 가중치로 stitch하고, 전역 맵과 동결 분위수로 결합한다.
 4. 원시 이상 맵을 저장한 뒤 검증 또는 TESTpub evaluator에 전달한다.
 
-원시 맵은 운영 판정이 아니다. TESTpub 평가에서도 threshold를 새로 맞추거나 선택하지 않았다.
+원시 맵은 연속 이상 점수로 저장했습니다. 운영 판정 임계값은 설정하지 않았고 TESTpub은 평가에만 사용했습니다.
 
-## 지연 측정: 대표 이미지와 전체 평가를 분리
+## 지연 결과
 
 | 측정 | TorchScript B4 | TensorRT FP32 + Triton | 변화 |
 | --- | ---: | ---: | ---: |
@@ -50,18 +50,18 @@
 - 결과가 실시간 처리량, 동시성, 장시간 안정성, 운영 SLA를 뜻한다는 주장
 - 두 시간 값을 직접 비율로 계산해 backend 성능을 일반화하는 주장
 
-## 정확도 보존: 고정된 TESTpub backend A/B
+## 성능 보존 결과
 
 | 지표 | TorchScript B4 | TensorRT FP32 + Triton | 절대 변화 |
 | --- | ---: | ---: | ---: |
 | Image AU-ROC | 0.734722 | 0.733333 | -0.001389 |
 | AU-PRO@0.05 | 0.132685 | 0.132769 | +0.000084 |
 
-Image AU-ROC는 이미지별 최종 원시 맵 최대값으로 이상 이미지를 순위화한다. AU-PRO@0.05는 픽셀 위치화 지표다. 두 값은 local evaluator 결과이며 AD2 server 또는 leaderboard 결과가 아니다.
+Image AU-ROC는 이미지별 최종 원시 맵 최대값으로 이상 이미지를 순위화합니다. AU-PRO@0.05는 픽셀 위치화 지표입니다. 두 값은 해시를 확인한 로컬 평가기의 결과이며 AD2 서버 평가는 별도 범위입니다.
 
-A/B 실행은 TESTpub을 tuning 데이터로 사용하지 않았다. 결과는 모델 성능 개선이나 챔피언 모델 선택이 아니라, 고정된 추론 경로에서 backend를 바꿨을 때의 보존 기록이다.
+A/B 실행에서 TESTpub은 평가에만 사용했습니다. 이 결과는 고정된 추론 경로에서 실행 백엔드를 바꿨을 때의 성능 보존 기록입니다.
 
-## 최종 맵 parity와 자원 관측
+## 수치 일치와 자원 사용
 
 | 항목 | 결과 | 의미 |
 | --- | --- | --- |
@@ -70,9 +70,9 @@ A/B 실행은 TESTpub을 tuning 데이터로 사용하지 않았다. 결과는 �
 | GPU reserved peak | 465,567,744 bytes | 서버 준비 후 후보 실행에서 기록 |
 | 고정 image digest | `a40838bb4587d2aceb46b1e7fd144afb24c9016c219dd3eba31716e4e28dbfc7` | Triton 실행 환경 식별 |
 
-`불확실성 대역 밖 flip = 0`은 세 검증 이미지에서의 final-map parity 계약 결과다. 모든 픽셀이 동일했거나 모든 입력·공정 조건에 대해 동일하다는 뜻은 아니다.
+`불확실성 대역 밖 flip = 0`은 세 검증 이미지에서 확인한 final-map parity 결과입니다. 적용 범위는 해당 세 이미지와 기록된 실행 환경입니다.
 
-## 증거 경계와 다음 검증 항목
+## 확인한 범위와 남은 과제
 
 현재 증거는 다음을 지원한다.
 
