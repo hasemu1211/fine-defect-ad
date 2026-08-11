@@ -56,7 +56,7 @@ def test_preview_metadata_binds_each_png(tmp_path):
         assert row['preview_sha256']==sha256((preview/row['file']).read_bytes()).hexdigest()
 
 def test_candidate_comparison_keeps_latency_scopes_separate():
-    svg = (Path(__file__).parents[1] / 'docs/assets/candidate-comparison.svg').read_text()
+    svg = (Path(__file__).parents[1] / 'docs/assets/evaluation-comparison.svg').read_text()
     assert '직접 비교 불가' in svg
     assert 'MVTec AD 2 Sheet-Metal 공개 시험 114장' in svg
     assert '동일 평가 조건: 528×2112 맵 · 공식 평가기' in svg

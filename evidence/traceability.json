@@ -2,7 +2,7 @@
   "schema_version": 1,
   "requirements": [
     {"requirement_id":"REQ-ARC","decision_id":"DEC-ARC-001","code":"src/fine_defect_ad/paired_rawmap_analysis.py","test":"tests/test_paired_rawmap_analysis.py","artifact":"docs/assets/system-architecture.svg","readme_claim":"두 이상 탐지 파이프라인"},
-    {"requirement_id":"REQ-QUA","decision_id":"DEC-QUA-001","code":"src/fine_defect_ad/portfolio_render.py","test":"tests/test_portfolio_render.py","artifact":"docs/assets/candidate-comparison.svg","readme_claim":"원본 제조 이미지는 공개하지 않습니다"},
+    {"requirement_id":"REQ-QUA","decision_id":"DEC-QUA-001","code":"src/fine_defect_ad/portfolio_render.py","test":"tests/test_portfolio_render.py","artifact":"docs/assets/evaluation-comparison.svg","readme_claim":"원본 제조 이미지는 공개하지 않습니다"},
     {"requirement_id":"REQ-DAT-001","decision_id":"DEC-DAT-001","code":"src/fine_defect_ad/manifest.py","test":"tests/test_manifest_builder.py","artifact":"evidence/r1-sheet-metal-manifest.json","readme_claim":"익명 ID"},
     {"requirement_id":"REQ-DAT-002","decision_id":"DEC-DAT-002","code":"src/fine_defect_ad/acquire_mvtecad2.py","test":"tests/test_acquire_mvtecad2.py","artifact":"evidence/mvtec-metric-provenance.json","readme_claim":"원본 제조 이미지는 공개하지 않습니다"},
     {"requirement_id":"REQ-MOD-001","decision_id":"DEC-MOD-001","code":"src/fine_defect_ad/g002_training.py","test":"tests/test_g002_training.py","artifact":"evidence/g002-training-decision-sources.md","readme_claim":"E2-Split 고해상도 추론"},

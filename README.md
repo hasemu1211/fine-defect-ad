@@ -2,7 +2,7 @@
 
 **고해상도 금속 표면 결함을 놓치지 않기 위한 추론 구조를 설계하고, 두 이상 탐지 파이프라인을 같은 공개 시험 데이터와 평가기로 재현·비교한 프로젝트입니다.**
 
-![동일 평가 조건에서 비교한 이상 탐지 결과](docs/assets/candidate-comparison.svg)
+![동일 평가 조건에서 비교한 이상 탐지 결과](docs/assets/evaluation-comparison.svg)
 
 ## 프로젝트 개요
 
